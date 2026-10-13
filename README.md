@@ -14,7 +14,7 @@
 
 | 插件 | 版本 | 说明 | 文档 |
 | --- | --- | --- | --- |
-| **药丸论坛签到**<br>`invites-signin` | 1.0.0 | 药丸论坛（invites.fun，Flarum）自动签到。Cookie 优先换取新会话后签到，失败自动回退用户名密码登录；支持仅查询签到状态、查看本地签到历史；结果经 TgtoDrive 已配置的**主通知机器人**推送，结果页内含运行日志窗口与「运行一次」按钮。 | [README](plugins/invites-signin/README.md) |
+| **药丸论坛签到**<br>`invites-signin` | 1.0.1 | 药丸论坛（invites.fun，Flarum）自动签到。Cookie 优先换取新会话后签到，失败自动回退用户名密码登录；支持仅查询签到状态、查看本地签到历史；结果经 TgtoDrive 已配置的**主通知机器人**推送，结果页内含运行日志窗口与「运行一次」按钮。 | [README](plugins/invites-signin/README.md) |
 
 ---
 
