@@ -57,6 +57,8 @@
 
 import json
 import re
+import socket
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -275,6 +277,105 @@ def _normalize_base(url):
     return text.rstrip("/")
 
 
+# ---------------------------------------------------------------------------
+# 脱敏与连通性自检
+# ---------------------------------------------------------------------------
+
+# 企业微信的接口把凭据放在 URL 查询串里（corpid / corpsecret / access_token），
+# 而 requests 在抛异常时会**回显完整 URL** —— 不处理就会把应用 Secret 原样写进运行日志。
+# 下面这条正则对所有 ``key=value`` 形式的敏感查询参数做兜底脱敏。
+SENSITIVE_QUERY_RE = re.compile(
+    r"(?i)\b(corpsecret|corpid|appsecret|access_token|encodingaeskey|secret|token)"
+    r"=([^&\s'\"),\]]+)"
+)
+
+# Telegram 的 bot token 放在 URL **路径**里：/bot<数字>:<token>/sendMessage。
+# 本插件不发 Telegram，但脱敏函数按通用实现，便于在多个插件间保持一致。
+BOT_TOKEN_PATH_RE = re.compile(r"(/bot)(\d{4,}):([A-Za-z0-9_\-]{20,})")
+
+
+def scrub_text(text, secrets=()):
+    """抹掉文本中的凭据，返回可安全打印的字符串。
+
+    三道防线：先按**已知明文**精确替换（可覆盖出现在任意位置的密钥），
+    再处理 ``key=value`` 形式的查询串（corpid / corpsecret / access_token），
+    最后处理 URL 路径里的 Telegram bot token。
+    """
+    if text is None:
+        return ""
+    result = str(text)
+    for value in secrets:
+        plain = str(value or "")
+        if len(plain) >= 8:
+            result = result.replace(plain, _mask(plain))
+    result = SENSITIVE_QUERY_RE.sub(
+        lambda match: "%s=%s" % (match.group(1), _mask(match.group(2))), result)
+    return BOT_TOKEN_PATH_RE.sub(
+        lambda match: "%s%s:%s" % (match.group(1), _mask(match.group(2)), _mask(match.group(3))),
+        result)
+
+
+# 判断是否为网络层失败（而非企业微信返回的业务错误），用于决定是否值得做连通性自检
+NETWORK_ERROR_HINTS = (
+    "sslerror", "ssl:", "connectionerror", "connecttimeout", "readtimeout",
+    "proxyerror", "newconnectionerror", "maxretries", "connectionrefused",
+    "connectionreseterror", "connection aborted", "unexpected_eof",
+    "name or service not known", "temporary failure in name resolution",
+    "nodename nor servname", "certificate verify", "urlopen error",
+    "getaddrinfo", "timed out",
+)
+
+
+def looks_like_network_error(error):
+    text = str(error or "").lower()
+    return any(hint in text for hint in NETWORK_ERROR_HINTS)
+
+
+def probe_endpoint(api_base, timeout=6):
+    """分层探测接口地址，定位问题卡在 DNS / TCP / TLS 的哪一层。
+
+    返回若干行中文结论。仅在网络类失败时调用，把一句 ``SSLError``
+    变成「卡在哪、为什么、下一步怎么办」。
+    """
+    parsed = urllib.parse.urlsplit(_normalize_base(api_base))
+    host = parsed.hostname or ""
+    scheme = (parsed.scheme or "https").lower()
+    port = parsed.port or (443 if scheme == "https" else 80)
+
+    if not host:
+        return ["接口地址里解析不出主机名：%s" % api_base]
+
+    lines = []
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+        ips = sorted({info[4][0] for info in infos})
+        lines.append("DNS 解析成功（%s → %s）" % (host, "、".join(ips[:3])))
+    except Exception as exc:
+        lines.append("DNS 解析失败（%s）—— 容器内无法解析该域名，先确认地址拼写与 DNS" % exc)
+        return lines
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            lines.append("TCP 连接成功（%s:%d）" % (host, port))
+    except Exception as exc:
+        lines.append("TCP 连接失败（%s:%d，%s）—— 端口不通或被防火墙拦截" % (host, port, exc))
+        return lines
+
+    if scheme == "https":
+        try:
+            context = ssl.create_default_context()
+            with socket.create_connection((host, port), timeout=timeout) as raw:
+                with context.wrap_socket(raw, server_hostname=host) as tls:
+                    lines.append("TLS 握手成功（%s）" % (tls.version() or "未知协议版本"))
+        except Exception as exc:
+            lines.append("TLS 握手失败（%s: %s）—— TCP 能连上，但 HTTPS 建不起来"
+                         % (type(exc).__name__, exc))
+            lines.append("常见原因：该端口上并不是 HTTPS 服务（反向代理只监听 HTTP 或尚未就绪）、"
+                         "证书不被信任，或中间设备按 SNI 切断了连接。")
+            lines.append("若该地址实际只提供 HTTP，请把「接口地址」改成 http://%s" % host)
+    return lines
+
+
 def _write_text(path, text):
     """以 UTF-8 + LF 写入文本。
 
@@ -434,19 +535,27 @@ def _http_download(url, max_bytes=2 * 1024 * 1024, timeout=None):
 # HTTP
 # ---------------------------------------------------------------------------
 
-def _http_request(method, url, params=None, body=None, timeout=None):
+def _http_request(method, url, params=None, body=None, timeout=None, use_proxy=False):
     """发起一次 HTTP 请求。
 
     返回 ``(status, text, data, error)``；``data`` 仅在响应体是 JSON 时非 None，
-    ``error`` 仅在网络层失败时非 None。
+    ``error`` 仅在网络层失败时非 None（**已脱敏**）。
+
+    ``use_proxy=False``（默认）会**显式绕过容器环境变量里的代理**：企业微信自建应用
+    常配合只允许特定地区访问的转发地址，请求被送去代理会直接连不通
+    （典型表现是 SSL 握手阶段的 ``UNEXPECTED_EOF_WHILE_READING``）。
     """
     timeout = timeout or (CONNECT_TIMEOUT, READ_TIMEOUT)
+    # 必须显式给出这两个键（值为 None 也要给）：requests 合并环境代理时用的是
+    # setdefault，键存在才不会被 HTTP_PROXY / HTTPS_PROXY 覆盖。
+    proxies = None if use_proxy else {"http": None, "https": None}
 
     if requests is not None:
         try:
             response = requests.request(
                 method, url, params=params, json=body,
                 timeout=timeout, headers={"User-Agent": USER_AGENT},
+                proxies=proxies,
             )
             text = response.text or ""
             data = None
@@ -456,7 +565,7 @@ def _http_request(method, url, params=None, body=None, timeout=None):
                 data = None
             return response.status_code, text, data, None
         except Exception as exc:
-            return None, "", None, "%s: %s" % (type(exc).__name__, exc)
+            return None, "", None, scrub_text("%s: %s" % (type(exc).__name__, exc))
 
     target = url
     if params:
@@ -468,15 +577,18 @@ def _http_request(method, url, params=None, body=None, timeout=None):
         headers["Content-Type"] = "application/json; charset=utf-8"
 
     request = urllib.request.Request(target, data=payload, headers=headers, method=method)
+    # ProxyHandler({}) 会禁用环境变量代理；需要走代理时才用默认的 opener
+    opener = (urllib.request.build_opener() if use_proxy
+              else urllib.request.build_opener(urllib.request.ProxyHandler({})))
     try:
-        with urllib.request.urlopen(request, timeout=timeout[1]) as response:
+        with opener.open(request, timeout=timeout[1]) as response:
             raw = response.read().decode("utf-8", "replace")
             status = response.status
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", "replace")
         status = exc.code
     except Exception as exc:
-        return None, "", None, "%s: %s" % (type(exc).__name__, exc)
+        return None, "", None, scrub_text("%s: %s" % (type(exc).__name__, exc))
 
     data = None
     try:
@@ -486,12 +598,14 @@ def _http_request(method, url, params=None, body=None, timeout=None):
     return status, raw, data, None
 
 
-def _http_upload(url, file_path, timeout=None):
+def _http_upload(url, file_path, timeout=None, use_proxy=False):
     """以 multipart/form-data 上传本地文件（字段名 ``media``）。
 
     返回结构同 :func:`_http_request`。用于把容器内的本地图片换成企业微信可用的图片 URL。
+    ``use_proxy`` 语义同 :func:`_http_request`。
     """
     timeout = timeout or (CONNECT_TIMEOUT, READ_TIMEOUT)
+    proxies = None if use_proxy else {"http": None, "https": None}
     path = Path(file_path)
     try:
         content = path.read_bytes()
@@ -508,6 +622,7 @@ def _http_upload(url, file_path, timeout=None):
             response = requests.post(
                 url, files={"media": (filename, content, mime)},
                 timeout=timeout, headers={"User-Agent": USER_AGENT},
+                proxies=proxies,
             )
             text = response.text or ""
             try:
@@ -516,7 +631,7 @@ def _http_upload(url, file_path, timeout=None):
                 data = None
             return response.status_code, text, data, None
         except Exception as exc:
-            return None, "", None, "%s: %s" % (type(exc).__name__, exc)
+            return None, "", None, scrub_text("%s: %s" % (type(exc).__name__, exc))
 
     boundary = "----TgtoDriveWecomNotify%s" % int(time.time() * 1000)
     body = b"".join([
@@ -532,15 +647,17 @@ def _http_upload(url, file_path, timeout=None):
         headers={"User-Agent": USER_AGENT,
                  "Content-Type": "multipart/form-data; boundary=%s" % boundary},
     )
+    opener = (urllib.request.build_opener() if use_proxy
+              else urllib.request.build_opener(urllib.request.ProxyHandler({})))
     try:
-        with urllib.request.urlopen(request, timeout=timeout[1]) as response:
+        with opener.open(request, timeout=timeout[1]) as response:
             raw = response.read().decode("utf-8", "replace")
             status = response.status
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", "replace")
         status = exc.code
     except Exception as exc:
-        return None, "", None, "%s: %s" % (type(exc).__name__, exc)
+        return None, "", None, scrub_text("%s: %s" % (type(exc).__name__, exc))
 
     try:
         data = json.loads(raw)
@@ -556,7 +673,8 @@ def _http_upload(url, file_path, timeout=None):
 class _WecomClient(object):
     """企业微信自建应用接口客户端：access_token 缓存 + 应用消息发送。"""
 
-    def __init__(self, api_base, corp_id, corp_secret, agent_id, logger, data_dir):
+    def __init__(self, api_base, corp_id, corp_secret, agent_id, logger, data_dir,
+                 use_proxy=False):
         self.api_base = _normalize_base(api_base)
         self.corp_id = str(corp_id or "").strip()
         self.corp_secret = str(corp_secret or "").strip()
@@ -564,6 +682,8 @@ class _WecomClient(object):
         self.log = logger
         self.token_path = Path(data_dir) / TOKEN_FILE
         self.cache_key = "%s|%s" % (self.api_base, self.corp_id)
+        # 是否跟随容器环境变量里的代理；默认直连（原因见 _http_request 的说明）
+        self.use_proxy = bool(use_proxy)
 
     # -- 地址 --------------------------------------------------------------
 
@@ -629,9 +749,21 @@ class _WecomClient(object):
         status, text, data, error = _http_request(
             "GET", self.url("/cgi-bin/gettoken"),
             params={"corpid": self.corp_id, "corpsecret": self.corp_secret},
+            use_proxy=self.use_proxy,
         )
         if error:
-            return None, "请求 gettoken 失败：%s（接口地址 %s）" % (error, self.api_base)
+            message = "请求 gettoken 失败：%s（接口地址 %s，%s）" % (
+                scrub_text(error, [self.corp_secret, self.corp_id]),
+                self.api_base,
+                "跟随环境变量代理" if self.use_proxy else "已绕过代理直连")
+            if looks_like_network_error(error):
+                lines = probe_endpoint(self.api_base)
+                message += "\n连通性自检（直连，不经过代理）：\n  - " + "\n  - ".join(lines)
+                if self.use_proxy and lines and not any("失败" in line for line in lines):
+                    message += ("\n注意：直连探测全部通过，而本次请求走了代理 —— "
+                                "失败很可能是代理访问不了该地址造成的，"
+                                "可把「网络代理」改成「不使用代理（直连）」。")
+            return None, message
         if not isinstance(data, dict):
             return None, "gettoken 返回非 JSON（HTTP %s）：%s" % (status, (text or "")[:200])
 
@@ -718,6 +850,7 @@ class _WecomClient(object):
         status, text, data, error = _http_request(
             "POST", self.url("/cgi-bin/message/send"),
             params={"access_token": token}, body=payload,
+            use_proxy=self.use_proxy,
         )
         if error:
             return None, (None, "请求 message/send 失败：%s" % error)
@@ -736,7 +869,7 @@ class _WecomClient(object):
         if error:
             return None, error
         status, text, data, error = _http_upload(
-            self.url("/cgi-bin/media/uploadimg"), file_path)
+            self.url("/cgi-bin/media/uploadimg"), file_path, use_proxy=self.use_proxy)
         if error:
             return None, "上传本地图片失败：%s" % error
         if not isinstance(data, dict):
@@ -758,6 +891,7 @@ class _WecomClient(object):
             return None, error
         status, text, data, error = _http_request(
             "GET", self.url("/cgi-bin/department/list"), params={"access_token": token},
+            use_proxy=self.use_proxy,
         )
         if error:
             return None, "请求 department/list 失败：%s" % error
@@ -777,6 +911,7 @@ class _WecomClient(object):
         status, text, data, error = _http_request(
             "GET", self.url("/cgi-bin/user/simplelist"),
             params={"access_token": token, "department_id": department_id},
+            use_proxy=self.use_proxy,
         )
         if error:
             return None, "请求 user/simplelist 失败：%s" % error
@@ -977,6 +1112,9 @@ class _NotifyRunner(object):
         self.agent_id = _s(self.params, "agent_id")
         self.corp_secret = _s(self.params, "corp_secret")
         self.api_base = _s(self.params, "api_base", DEFAULT_API_BASE) or DEFAULT_API_BASE
+        # 网络代理：默认「不使用代理」。企业微信自建应用常配合只允许特定地区访问的
+        # 转发地址，若跟随容器的 HTTP_PROXY / HTTPS_PROXY，请求会被送去代理而连不通。
+        self.use_proxy = _s(self.params, "proxy_mode", "off").lower() == "env"
         self.token = _s(self.params, "token")
         self.encoding_aes_key = _s(self.params, "encoding_aes_key")
         self.admin_users = _s(self.params, "admin_users")
@@ -1036,13 +1174,15 @@ class _NotifyRunner(object):
         self.client = _WecomClient(
             self.api_base, self.corp_id, self.corp_secret,
             self.agent_id, self.log, self.data_dir,
+            use_proxy=self.use_proxy,
         )
         if self.config_source != "插件表单":
             self.log.info("配置来源：%s" % self.config_source)
         self.log.info(
-            "接口地址 %s｜企业ID %s｜AgentId %s｜Secret %s"
+            "接口地址 %s｜企业ID %s｜AgentId %s｜Secret %s｜网络 %s"
             % (self.client.masked_base(), _mask(self.corp_id), self.agent_id or "（未填写）",
-               _filled(self.corp_secret))
+               _filled(self.corp_secret),
+               "跟随环境变量代理" if self.use_proxy else "直连（不走代理）")
         )
 
     def validate_textcard(self):

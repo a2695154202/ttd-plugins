@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "invites-signin",
   "name": "药丸论坛签到",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。执行结果通过 TgtoDrive 已配置的通知机器人推送（可用下拉框指定用哪一个），并在结果页提供运行日志窗口。定时执行请在「我的插件 → 定时执行」中配置 cron。",
   "author": "a2695154202",
   "entry": "plugin.py",

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "wecom-notify",
   "name": "企业微信通知",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "让 TgtoDrive 具备企业微信（WeCom）应用消息推送能力，并且可以被其他插件调用。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可用文本、markdown、文本卡片或带图卡片通知，把任意内容发送给指定成员、部门、标签或全体成员；支持转发代理地址（应对「企业可信IP」限制）、超长消息自动分段、access_token 本地缓存与发送历史。内置「发送测试消息」按钮一键验证通知链路，「查看调用方法」按钮给出被其他插件调用的完整参数说明与示例代码。",
   "author": "a2695154202",
   "entry": "plugin.py",
@@ -192,6 +192,17 @@
       "help": "接口基础地址。2022 年 6 月 28 日后新建的自建应用必须配置「企业可信IP」才能调用接口（否则报 60020）；若服务器出口 IP 不固定，可在此填写转发代理地址（如 https://wx.example.com），请求会发往「代理地址 + /cgi-bin/...」。不使用代理时保留默认值。"
     },
     {
+      "name": "proxy_mode",
+      "label": "网络代理",
+      "type": "select",
+      "default": "off",
+      "options": [
+        {"label": "不使用代理（直连，推荐）", "value": "off"},
+        {"label": "跟随容器环境变量代理（HTTP_PROXY / HTTPS_PROXY）", "value": "env"}
+      ],
+      "help": "默认「不使用代理」。若「代理地址」是只允许特定地区访问的转发服务，本插件跟随容器代理会把请求送去代理而连不通（表现为 SSL 握手被中断：SSLError / UNEXPECTED_EOF_WHILE_READING）。只有当容器必须经代理才能访问企业微信时，才改成「跟随容器环境变量代理」。"
+    },
+    {
       "name": "token",
       "label": "回调 Token",
       "type": "text",
@@ -281,6 +292,7 @@
             {"type": "field", "name": "agent_id"},
             {"type": "field", "name": "corp_secret"},
             {"type": "field", "name": "api_base"},
+            {"type": "field", "name": "proxy_mode"},
             {"type": "divider"},
             {"type": "button", "label": "检查配置", "action": "run", "params": {"func": "config"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
           ]},

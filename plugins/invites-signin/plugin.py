@@ -235,6 +235,45 @@ def _mask_proxy(url):
     return re.sub(r"//[^/@\s]+@", "//***@", str(url))
 
 
+def _mask(value, head=3, tail=3):
+    text = str(value or "")
+    if not text:
+        return "（未填写）"
+    if len(text) <= head + tail:
+        return text[0] + "*" * max(len(text) - 1, 0)
+    return "%s…%s" % (text[:head], text[-tail:])
+
+
+# 网络库在抛异常时会回显**完整 URL**，而凭据恰恰藏在 URL 里：
+# 本插件的 Telegram bot token 在路径中（/bot<id>:<token>/sendMessage），
+# 企业微信的 corpsecret 在查询串中。不脱敏就会把密钥原样写进运行日志。
+SENSITIVE_QUERY_RE = re.compile(
+    r"(?i)\b(corpsecret|corpid|appsecret|access_token|encodingaeskey|secret|token)"
+    r"=([^&\s'\"),\]]+)"
+)
+BOT_TOKEN_PATH_RE = re.compile(r"(/bot)(\d{4,}):([A-Za-z0-9_\-]{20,})")
+
+
+def scrub_text(text, secrets=()):
+    """抹掉文本中的凭据，返回可安全打印的字符串。
+
+    三道防线：先按**已知明文**精确替换、再处理 ``key=value`` 查询串、
+    最后处理 URL 路径里的 Telegram bot token。
+    """
+    if text is None:
+        return ""
+    result = str(text)
+    for value in secrets:
+        plain = str(value or "")
+        if len(plain) >= 8:
+            result = result.replace(plain, _mask(plain))
+    result = SENSITIVE_QUERY_RE.sub(
+        lambda match: "%s=%s" % (match.group(1), _mask(match.group(2))), result)
+    return BOT_TOKEN_PATH_RE.sub(
+        lambda match: "%s%s:%s" % (match.group(1), _mask(match.group(2)), _mask(match.group(3))),
+        result)
+
+
 # ---------------------------------------------------------------------------
 # TgtoDrive 通知：读取项目已配置的通知机器人并推送
 # ---------------------------------------------------------------------------
@@ -1070,7 +1109,8 @@ class _SigninRunner(object):
                 allow_redirects=False,
             )
         except Exception as exc:
-            self.log.warn("发送 Telegram 通知失败：%s" % exc)
+            self.log.warn("发送 Telegram 通知失败：%s"
+                          % scrub_text(exc, [bot.get("token")]))
             return False, "send-error"
 
         if not 200 <= resp.status_code < 300:

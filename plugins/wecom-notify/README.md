@@ -6,7 +6,7 @@
 （参考 <https://developer.work.weixin.qq.com/document>）。
 
 - **插件 id**：`wecom-notify`
-- **版本**：`1.0.0`
+- **版本**：`1.0.1`
 - **作者**：`a2695154202`
 - **入口**：`plugin.py`
 - **超时**：120 秒
@@ -66,6 +66,7 @@
 | 应用 AgentId | 必填，纯数字 |
 | 应用 Secret | 必填，自建应用的 Secret |
 | 代理地址 | 默认 `https://qyapi.weixin.qq.com`；使用转发代理时改写为代理地址 |
+| 网络代理 | 默认**「不使用代理（直连）」**。转发代理地址通常是「只允许特定地区访问」的服务，若插件跟随容器的 `HTTP_PROXY` / `HTTPS_PROXY`，请求会被送去代理而直接连不通（表现为 `SSLError ... UNEXPECTED_EOF_WHILE_READING`）。只有容器必须经代理才能出网时，才改成「跟随容器环境变量代理」 |
 
 ### 发送消息
 
@@ -195,6 +196,7 @@ requests.post(
 | 现象 | 原因与处理 |
 | --- | --- |
 | `60020` IP 不在可信名单 | 把报错里给出的出口 IP 加入应用「企业可信IP」（约 1 分钟生效），或在「代理地址」填转发代理 |
+| `SSLError` / `UNEXPECTED_EOF_WHILE_READING`，或 `Max retries exceeded` | 「代理地址」是只允许特定地区访问的转发服务，而请求走了容器代理（`HTTP_PROXY` / `HTTPS_PROXY`） | 把「网络代理」保持为**「不使用代理（直连）」**。网络类失败时结果页会自动给出 **DNS → TCP → TLS** 三层自检结论，直接指出卡在哪一层 |
 | `40001` / `40013` | Secret 或企业 ID 不正确（Secret 重置过需重新复制） |
 | `42001` / `40014` | access_token 过期；插件会自动清缓存重取一次 |
 | `60011` / `82001` | 接收者不在应用可见范围内，或 UserID / 部门 ID 写错 |
