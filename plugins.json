@@ -4,14 +4,14 @@
     {
       "id": "invites-signin",
       "name": "药丸论坛签到",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。执行结果通过 TgtoDrive 已配置的通知机器人推送（可用下拉框指定用哪一个），并在结果页提供运行日志窗口。定时执行请在「我的插件 → 定时执行」中配置 cron。",
       "author": "a2695154202",
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/invites-signin",
-      "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/invites-signin-v1.0.3/invites-signin.zip",
-      "sha256": "d91bc9052a8715e4c3d60bd4dad774f19267c97f61d58ff09aebf2500dff57a0",
-      "size": 98740,
+      "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/invites-signin-v1.0.4/invites-signin.zip",
+      "sha256": "d8a5ab96cb700c4213e403f77bb87f79108a96d0eb4948b3817e96fc555c4d8f",
+      "size": 102330,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"

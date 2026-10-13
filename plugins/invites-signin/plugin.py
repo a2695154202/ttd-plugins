@@ -543,7 +543,7 @@ class _SigninRunner(object):
             self.wecom_msgtype = "text"
         self.wecom_touser = str(self.p.get("wecom_touser") or "").strip()
         self.wecom_card_image = str(self.p.get("wecom_card_image") or "").strip()
-        self._wecom_state = ""
+        self._wecom_state = "not-called"
         self._wecom_error = ""
         self.use_proxy = bool(self.p.get("use_proxy", True))
         self.use_fingerprint = bool(self.p.get("use_browser_fingerprint", False))
@@ -1182,8 +1182,16 @@ class _SigninRunner(object):
             return False
 
         if resp.status_code not in (200, 201, 202):
-            self.log.warn("调用企业微信通知插件失败：HTTP %s %s"
-                          % (resp.status_code, (resp.text or "")[:160]))
+            hint = ""
+            if resp.status_code == 404:
+                hint = ("（未找到插件「%s」：请在「实用工具 → 我的插件」确认它已安装并启用）"
+                        % WECOM_PLUGIN_ID)
+            elif resp.status_code in (401, 403):
+                hint = "（OpenAPI 令牌无效或权限不足）"
+            elif resp.status_code == 400:
+                hint = "（参数被拒绝：请确认「%s」插件已更新到较新版本）" % WECOM_PLUGIN_ID
+            self.log.warn("调用企业微信通知插件失败：HTTP %s%s｜%s"
+                          % (resp.status_code, hint, (resp.text or "")[:160]))
             self._wecom_state = "http-%s" % resp.status_code
             return False
 
@@ -1242,18 +1250,43 @@ class _SigninRunner(object):
                 return False, str(result.get("error") or "发送失败")
         return None, "pending"
 
+    # 微信通知状态 → 结果表文案。
+    # 必须覆盖 _notify_wecom 会设置的**每一个**取值：漏掉一个，它就会落到兜底文案上、
+    # 把真实原因吞掉（「http-404」此前被显示成「本次未发送」，导致无法定位问题）。
+    WECOM_STATE_LABELS = {
+        "sent": "已发送",
+        "submitted": "已提交",
+        "pending": "已提交（后台执行，未确认结果）",
+        "no-endpoint": "未配置「TgtoDrive 地址」或「OpenAPI 令牌」（见「通知与接口」页签）",
+        "call-error": "调用失败（网络错误，详见运行日志）",
+        "failed": "发送失败（详见运行日志）",
+        "disabled": "未启用",
+        "not-called": "本次执行的功能不发送通知（仅签到会发）",
+    }
+
+    WECOM_HTTP_HINTS = {
+        "404": "未找到「企业微信通知」插件 —— 请在「我的插件」确认它已安装并启用",
+        "401": "OpenAPI 令牌无效或已撤销",
+        "403": "OpenAPI 令牌权限不足",
+        "400": "参数被拒绝 —— 通常是「企业微信通知」插件版本过旧",
+        "503": "TgtoDrive 服务暂时不可用",
+    }
+
     def _wecom_row(self):
-        """结果表里的「微信通知」一行。"""
+        """结果表里的「微信通知」一行：每种原因都要能唯一显示出来。"""
         if not self.wecom_notify:
-            return "未启用"
-        return {
-            "sent": "已发送",
-            "submitted": "已提交",
-            "pending": "已提交（后台执行，未确认结果）",
-            "no-endpoint": "未配置 TgtoDrive 地址或令牌",
-            "call-error": "调用失败（详见日志）",
-            "failed": "发送失败（详见日志）",
-        }.get(self._wecom_state, "本次未发送")
+            return "未启用（勾选「同时发送微信通知」后生效）"
+        state = self._wecom_state or "not-called"
+        if state.startswith("http-"):
+            code = state[len("http-"):]
+            hint = self.WECOM_HTTP_HINTS.get(code)
+            return "调用失败 HTTP %s%s" % (code, "：" + hint if hint else "")
+        if state == "failed" and self._wecom_error:
+            return "发送失败：%s" % str(self._wecom_error)[:120]
+        label = self.WECOM_STATE_LABELS.get(state)
+        if label is None:
+            return "未知状态「%s」（请把这一行反馈给插件作者）" % state
+        return label
 
     # -- 结果装配 ----------------------------------------------------------
 
@@ -1436,13 +1469,22 @@ class _SigninRunner(object):
         if not self.notify_enabled:
             self.log.info("「发送测试通知」为手动测试动作，本次忽略「发送结果通知」开关，仍然发送")
         self.notify_enabled = True
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         body = (
             "━━━━━━━━━━━━━━\n"
             "✨ 本条为测试消息\n"
             "━━━━━━━━━━━━━━\n"
             "📌 来源：药丸签到插件\n"
             "🕐 时间：%s"
-        ) % datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ) % now
+
+        # 勾选了「同时发送微信通知」时，测试通知也要走一遍微信链路 ——
+        # 否则用户在结果表里只会看到「微信通知 本次未发送」，无从验证这条配置。
+        self._notify_wecom("测试通知", [
+            ("状态", "✅ 测试通知"),
+            ("来源", "药丸签到插件"),
+            ("时间", now),
+        ])
 
         notified, notify_state = self._notify(body)
         if notified:

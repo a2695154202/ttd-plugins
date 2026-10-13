@@ -14,7 +14,7 @@
 
 | 插件 | 版本 | 说明 | 文档 |
 | --- | --- | --- | --- |
-| **药丸论坛签到**<br>`invites-signin` | 1.0.3 | 药丸论坛（invites.fun，Flarum）自动签到。Cookie 优先换取新会话后签到，失败自动回退用户名密码登录；支持仅查询签到状态、查看本地签到历史；结果经 TgtoDrive 已配置的**主通知机器人**推送，也可**同时调用「企业微信通知」插件发送微信通知**（文本或带图卡片）；结果页内含运行日志窗口与「运行一次」按钮。 | [README](plugins/invites-signin/README.md) |
+| **药丸论坛签到**<br>`invites-signin` | 1.0.4 | 药丸论坛（invites.fun，Flarum）自动签到。Cookie 优先换取新会话后签到，失败自动回退用户名密码登录；支持仅查询签到状态、查看本地签到历史；结果经 TgtoDrive 已配置的**主通知机器人**推送，也可**同时调用「企业微信通知」插件发送微信通知**（文本或带图卡片，「发送测试通知」同样会走微信链路）；结果页内含运行日志窗口与「运行一次」按钮。 | [README](plugins/invites-signin/README.md) |
 | **企业微信通知**<br>`wecom-notify` | 1.0.1 | 让 TgtoDrive 具备**企业微信（WeCom）应用消息推送**能力。填写企业 ID / 应用 AgentId / 应用 Secret 后，可用文本、markdown 或文本卡片发送给成员、部门、标签或全体可见成员；支持转发代理地址（应对「企业可信IP」限制）、**可选是否经过容器代理**、超长消息自动分段、access_token 本地缓存与发送历史，内置**「发送测试消息」按钮**一键验证通知链路。 | [README](plugins/wecom-notify/README.md) |
 
 ---
