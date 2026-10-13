@@ -1514,6 +1514,57 @@ class _WecomClient(object):
         users = data.get("userlist")
         return (users if isinstance(users, list) else []), None
 
+    def visible_members(self):
+        """读取应用可见范围内的成员（根部门 + 子部门），返回 ``(list, error)``。"""
+        token, error = self.get_token()
+        if error:
+            return None, error
+        status, text, data, error = _http_request(
+            "GET", self.url("/cgi-bin/user/list"),
+            params={"access_token": token, "department_id": 1, "fetch_child": 1},
+            use_proxy=self.use_proxy,
+        )
+        if error:
+            return None, "请求 user/list 失败：%s" % error
+        if not isinstance(data, dict):
+            return None, "user/list 返回非 JSON（HTTP %s）：%s" % (status, (text or "")[:160])
+        if data.get("errcode") not in (0, None):
+            return None, self.describe_error(data.get("errcode"), data.get("errmsg", ""),
+                                             stage="user/list")
+        users = data.get("userlist")
+        return (users if isinstance(users, list) else []), None
+
+    def verify_recipients(self, touser):
+        """发送前判断收件人是否真的收得到。
+
+        企业微信在「收件人不在应用可见范围内」时，**通常仍返回 ``errcode=0`` 与 msgid，
+        但消息不会投递** —— 只凭接口返回值会把这种情况误判成发送成功。
+
+        返回 ``(status, message)``：
+
+        * ``"ok"``      —— 收件人都在可见范围内
+        * ``"empty"``   —— 可见范围为空，``@all`` 无人可投
+        * ``"missing"`` —— 有收件人不在可见范围
+        * ``"unknown"`` —— 没有通讯录权限或查询失败，无法判定（不影响发送）
+        """
+        users, error = self.visible_members()
+        if error:
+            return "unknown", error
+
+        visible = {str(u.get("userid")) for u in users if u.get("userid")}
+        if str(touser or "").strip() == "@all":
+            if not visible:
+                return "empty", ("应用可见范围内没有任何成员，@all 无人可投 —— "
+                                 "请到管理后台该应用的「可见范围」里添加接收人")
+            return "ok", "应用可见成员共 %d 人" % len(visible)
+
+        wanted = [x for x in _split_ids(touser) if x and x != "@all"]
+        missing = [x for x in wanted if x not in visible]
+        if missing:
+            return "missing", ("以下收件人不在应用可见范围内：%s —— "
+                               "企业微信会接受请求但不投递" % "、".join(missing[:8]))
+        return "ok", "收件人均在可见范围内（可见成员共 %d 人）" % len(visible)
+
 
 # ---------------------------------------------------------------------------
 # TgtoDrive 项目设置兜底读取
@@ -1709,6 +1760,9 @@ class _NotifyRunner(object):
         self.token = _s(self.params, "token")
         self.encoding_aes_key = _s(self.params, "encoding_aes_key")
         self.admin_users = _s(self.params, "admin_users")
+        # 投递校验结果（收件人是否真的在应用可见范围内）
+        self._delivery_status = ""
+        self._delivery_note = ""
 
         self.touser = _s(self.params, "touser")
         self.toparty = _s(self.params, "toparty")
@@ -1807,6 +1861,8 @@ class _NotifyRunner(object):
             else:
                 touser = "@all"
                 self.log.info("未填写任何收件人，默认发送给应用全体可见成员（@all）")
+        self.log.info("接收人：成员 %s｜部门 %s｜标签 %s"
+                      % (touser or "（无）", self.toparty or "（无）", self.totag or "（无）"))
         return touser, self.toparty, self.totag
 
     # -- 各功能 ------------------------------------------------------------
@@ -2031,6 +2087,7 @@ class _NotifyRunner(object):
         return self._dispatch(chunks, segmented=len(chunks) > 1)
 
     def _dispatch(self, chunks, segmented):
+        self._verify_delivery()
         total = len(chunks)
         records = []
         failures = []
@@ -2064,16 +2121,37 @@ class _NotifyRunner(object):
         )
 
     def _recipient_note(self):
-        if self.touser == "@all":
+        """实际收件人的可读描述 —— 必须与真正发出去的一致。
+
+        此前直接读 `self.touser`，而没填收件人时会回退成 `@all` 或「管理员白名单」，
+        导致结果表显示「（未指定）」而实际发给了全体可见成员，无从对照。
+        """
+        touser, toparty, totag = self.resolve_recipients()
+        if touser == "@all":
             return "全体可见成员（@all）"
         parts = []
-        if self.touser:
-            parts.append("成员 %s" % self.touser)
-        if self.toparty:
-            parts.append("部门 %s" % self.toparty)
-        if self.totag:
-            parts.append("标签 %s" % self.totag)
+        if touser:
+            parts.append("成员 %s" % touser)
+        if toparty:
+            parts.append("部门 %s" % toparty)
+        if totag:
+            parts.append("标签 %s" % totag)
         return "；".join(parts) or "（未指定）"
+
+    def _verify_delivery(self):
+        """发送前校验收件人是否真的收得到。
+
+        企业微信在「收件人不在应用可见范围内」时通常仍返回 errcode=0 与 msgid，
+        但消息不投递 —— 只看返回值会把这种情况误判成功。
+        """
+        touser, _toparty, _totag = self.resolve_recipients()
+        self._delivery_status, self._delivery_note = self.client.verify_recipients(touser)
+        if self._delivery_status == "ok":
+            self.log.info("投递校验：%s" % self._delivery_note)
+        elif self._delivery_status == "unknown":
+            self.log.warn("投递校验未完成（不影响本次发送）：%s" % self._delivery_note)
+        else:
+            self.log.warn("⚠ 投递校验：%s" % self._delivery_note)
 
     def do_test(self):
         """发送测试消息：按「文本消息内容」与「卡片消息内容」两个输入框发送。
@@ -2477,6 +2555,27 @@ class _NotifyRunner(object):
         ]
         if error:
             components.append({"type": "alert", "text": error, "style": {"tone": "danger"}})
+
+        # 投递校验：收件人不在应用可见范围时，企业微信会「接受请求但不投递」
+        if self._delivery_status in ("empty", "missing"):
+            components.append({
+                "type": "alert",
+                "text": "投递校验：%s" % self._delivery_note,
+                "style": {"tone": "warning"},
+            })
+
+        # 自建应用的消息只到「企业微信」客户端；个人微信需要关注「微信插件」才能收到
+        if status == "ok":
+            components.append({
+                "type": "text",
+                "text": ("消息已投递到「**企业微信**」客户端。**个人微信不会收到自建应用消息** —— "
+                         "要让它出现在微信里，需管理员在「管理后台 → 我的企业 → 微信插件」"
+                         "获取「邀请关注微信插件」二维码，成员用微信扫码关注，"
+                         "并在 微信插件 → 右上角 → 设置 → 接收应用消息 中打开开关。"
+                         "详见插件 README 的「在微信中接收消息」一节。"),
+                "style": {"tone": "muted"},
+            })
+
         components.extend([
             {"type": "divider"},
             {"type": "heading", "text": "运行日志"},
