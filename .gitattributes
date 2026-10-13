@@ -22,4 +22,7 @@
 *.7z    binary
 
 # 发布归档不参与 GitHub 语言统计
-dist/*  linguist-generated=true -diff
+dist/*     linguist-generated=true
+# dist/ 下的单文件版仍是普通文本源码，按文本处理以便 GitHub 正常展示与 diff
+dist/*.py  text eol=lf diff
+dist/*.zip binary
