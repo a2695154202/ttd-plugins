@@ -1,0 +1,47 @@
+# ---- WorkBuddy Agent 本地数据（不随仓库分发）----
+.workbuddy/
+
+# ---- 构建产物（由 scripts/package_plugin.py 与 Release 工作流生成）----
+dist/
+build/
+*.pyz
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- 插件运行时数据（TgtoDrive 保存的表单设置，不应入库）----
+plugins/*/settings.json
+
+# ---- 归档资料中的二进制压缩包（内容已解包保留，原件不入库）----
+docs/tgto-plugin-kb/example/*.zip
+
+# ---- 编辑器 / IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- 操作系统 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 本地临时文件与凭据 ----
+*.log
+.env
+.env.*
+!.env.example

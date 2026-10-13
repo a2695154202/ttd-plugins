@@ -1,0 +1,55 @@
+name: Validate plugins
+
+# 每次推送与 PR 都校验：清单字段是否符合 TgtoDrive 协议、插件能否打包、plugins.json 是否与产物同步。
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: 校验清单、打包与目录同步
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 打包全部插件（同时校验清单字段）
+        run: python scripts/package_plugin.py --all
+
+      - name: 校验 JSON 与 Python 语法
+        run: |
+          set -euo pipefail
+          python -m json.tool plugins.json > /dev/null
+          for manifest in plugins/*/plugin.json; do
+            python -m json.tool "$manifest" > /dev/null
+          done
+          for entry in plugins/*/plugin.py; do
+            python -m py_compile "$entry"
+          done
+
+      - name: 检查 plugins.json 是否与产物同步
+        run: |
+          set -euo pipefail
+          if grep -q 'OWNER/REPO' plugins.json; then
+            echo "::warning::plugins.json 仍包含占位仓库 OWNER/REPO，已跳过同步检查。"
+            echo "::warning::请执行：python scripts/build_marketplace.py --repo <账号>/<仓库名>"
+            exit 0
+          fi
+          cp plugins.json "$RUNNER_TEMP/plugins.json.bak"
+          python scripts/build_marketplace.py --repo "${{ github.repository }}"
+          if ! diff -u "$RUNNER_TEMP/plugins.json.bak" plugins.json; then
+            echo "::error::plugins.json 与当前产物不一致，请本地重新生成后提交。"
+            exit 1
+          fi
+          echo "plugins.json 与产物一致。"

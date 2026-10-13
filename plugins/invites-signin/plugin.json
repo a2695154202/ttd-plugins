@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "id": "invites-signin",
+  "name": "药丸论坛签到",
+  "version": "1.0.0",
+  "description": "药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。执行结果通过 TgtoDrive 已配置的通知机器人推送（可用下拉框指定用哪一个），并在结果页提供运行日志窗口。定时执行请在「我的插件 → 定时执行」中配置 cron。",
+  "author": "a2695154202",
+  "entry": "plugin.py",
+  "timeout": 300,
+  "inputs": [
+    {
+      "name": "func",
+      "label": "执行功能",
+      "type": "select",
+      "default": "auto",
+      "options": [
+        {"label": "自动签到（Cookie 优先，失败回退账号密码）", "value": "auto"},
+        {"label": "仅用 Cookie 签到", "value": "cookie"},
+        {"label": "仅用账号密码登录签到", "value": "login"},
+        {"label": "仅查询签到状态（不签到）", "value": "status"},
+        {"label": "查看签到历史（本地记录）", "value": "history"},
+        {"label": "读取通知机器人列表（不签到）", "value": "bots"},
+        {"label": "发送测试通知（不签到）", "value": "test_notify"}
+      ],
+      "help": "定时执行建议保持 auto：「运行一次」按钮会以当前选中的功能立即执行一次。"
+    },
+    {
+      "name": "notify",
+      "label": "发送结果通知",
+      "type": "boolean",
+      "default": true,
+      "help": "开启后，签到成功或失败都会通过 TgtoDrive 通知机器人推送。点「运行一次」按钮会强制开启本次通知。"
+    },
+    {
+      "name": "notify_bot",
+      "label": "通知机器人",
+      "type": "select",
+      "default": "auto",
+      "options": [
+        {"label": "自动：优先主通知机器人", "value": "auto"},
+        {"label": "列表第 1 个机器人", "value": "index:1"},
+        {"label": "列表第 2 个机器人", "value": "index:2"},
+        {"label": "列表第 3 个机器人", "value": "index:3"},
+        {"label": "列表第 4 个机器人", "value": "index:4"},
+        {"label": "列表第 5 个机器人", "value": "index:5"},
+        {"label": "列表第 6 个机器人", "value": "index:6"},
+        {"label": "列表第 7 个机器人", "value": "index:7"},
+        {"label": "列表第 8 个机器人", "value": "index:8"}
+      ],
+      "help": "从 TgtoDrive 已配置的通知机器人里选一个来推送签到结果，选择会随插件设置一起保存，下次打开自动恢复。TgtoDrive 的插件清单是静态读取的，下拉框选项无法在打开页面时按接口结果动态生成，所以这里按机器人列表的序号选择：先点下方「刷新机器人列表」按钮，即可看到序号与机器人名称的对应关系，并能直接对某个机器人发送测试通知；运行时日志也会打印实际使用的机器人名称与序号。"
+    },
+    {
+      "name": "tgto_base_url",
+      "label": "TgtoDrive 地址（可选）",
+      "type": "text",
+      "default": "",
+      "placeholder": "http://127.0.0.1:12366",
+      "help": "留空则读取容器环境变量 TGTO_OPENAPI_BASE_URL。插件与 TgtoDrive 在同一容器时通常填 http://127.0.0.1:12366；仅填写了令牌而未填地址时，插件会按该默认地址尝试。"
+    },
+    {
+      "name": "tgto_token",
+      "label": "OpenAPI 令牌（可选）",
+      "type": "password",
+      "default": "",
+      "help": "留空则读取容器环境变量 TGTO_OPENAPI_TOKEN。仅用于读取通知机器人配置与全局代理。注意：插件设置以明文 JSON 保存在服务器的插件目录，管理员可读取；更在意安全时请改用环境变量并把此项留空。令牌不会出现在运行日志或返回值中。"
+    },
+    {
+      "name": "use_proxy",
+      "label": "使用网络代理",
+      "type": "boolean",
+      "default": true,
+      "help": "依次尝试容器环境变量（HTTPS_PROXY/ALL_PROXY/HTTP_PROXY）与 TgtoDrive 全局代理设置。"
+    },
+    {
+      "name": "use_browser_fingerprint",
+      "label": "浏览器指纹请求",
+      "type": "boolean",
+      "default": false,
+      "help": "改用容器内已安装的 curl_cffi 模拟 Chrome 指纹，用于普通请求被 Cloudflare 拦截时。原 MoviePilot 插件的「浏览器仿真」依赖浏览器环境，ttd 容器内不可用，此处以 curl_cffi 作为替代方案。"
+    },
+    {
+      "name": "retry_count",
+      "label": "失败重试次数",
+      "type": "number",
+      "default": 2,
+      "min": 1,
+      "max": 10,
+      "step": 1,
+      "help": "每轮会依次尝试 Cookie 与账号密码两条通道。"
+    },
+    {
+      "name": "retry_interval",
+      "label": "重试间隔（秒）",
+      "type": "number",
+      "default": 10,
+      "min": 0,
+      "max": 300,
+      "step": 1,
+      "help": "原插件单位为分钟，此处改为秒以适配插件超时限制。"
+    },
+    {
+      "name": "history_days",
+      "label": "历史记录保留天数",
+      "type": "number",
+      "default": 30,
+      "min": 1,
+      "max": 3650,
+      "step": 1,
+      "help": "本地签到历史保存在插件数据目录，超出天数的记录会被清理。"
+    },
+    {
+      "name": "cookie",
+      "label": "Cookie",
+      "type": "password",
+      "default": "",
+      "placeholder": "flarum_remember=xxxx; flarum_session=yyyy",
+      "help": "最少需要包含 flarum_remember 值。浏览器登录 invites.fun 时勾选「记住我」，随后从开发者工具复制整条 Cookie。留空则只走账号密码通道。"
+    },
+    {
+      "name": "username",
+      "label": "用户名",
+      "type": "text",
+      "default": "",
+      "placeholder": "登录邮箱或用户名",
+      "help": "仅在 Cookie 通道失败或未填写 Cookie 时使用。"
+    },
+    {
+      "name": "user_password",
+      "label": "密码",
+      "type": "password",
+      "default": "",
+      "help": "与用户名配套使用，仅用于回退登录通道。密码不会出现在日志与返回值中。"
+    },
+    {
+      "name": "site_base",
+      "label": "站点地址",
+      "type": "text",
+      "default": "https://invites.fun",
+      "help": "默认即为药丸论坛主站，通常无需修改。"
+    }
+  ],
+  "ui": {
+    "width": "wide",
+    "layout": "stack",
+    "components": [
+      {"type": "heading", "text": "药丸论坛（invites.fun）自动签到"},
+      {"type": "alert", "text": "填写 Cookie 或账号密码后即可运行。结果通知使用 TgtoDrive 已配置的通知机器人：若日志提示未配置 TgtoDrive 地址或令牌，请在「通知与接口」页填写，或设置容器环境变量 TGTO_OPENAPI_BASE_URL / TGTO_OPENAPI_TOKEN 并重启服务。需要每天自动签到时，请在「我的插件 → 定时执行」中新建计划，cron 建议 5 8 * * *（每天 08:05 北京时间），执行功能保持 auto。", "style": {"tone": "warning"}},
+      {"type": "tabs", "children": [
+        {"type": "card", "label": "签到配置", "children": [
+          {"type": "field", "name": "func"},
+          {"type": "field", "name": "notify"},
+          {"type": "field", "name": "use_proxy"},
+          {"type": "field", "name": "use_browser_fingerprint"},
+          {"type": "field", "name": "retry_count"},
+          {"type": "field", "name": "retry_interval"},
+          {"type": "field", "name": "history_days"}
+        ]},
+        {"type": "card", "label": "通知与接口", "children": [
+          {"type": "field", "name": "notify_bot"},
+          {"type": "field", "name": "tgto_base_url"},
+          {"type": "field", "name": "tgto_token"}
+        ]},
+        {"type": "card", "label": "账号与凭据", "children": [
+          {"type": "field", "name": "cookie"},
+          {"type": "field", "name": "username"},
+          {"type": "field", "name": "user_password"},
+          {"type": "field", "name": "site_base"}
+        ]}
+      ]},
+      {"type": "divider"},
+      {"type": "text", "text": "「运行一次」立即用「执行功能」中选中的功能运行并强制通知结果；「刷新机器人列表」读取 TgtoDrive 已配置的通知机器人并给出序号对照。", "style": {"tone": "muted"}},
+      {"type": "grid", "columns": 2, "children": [
+        {"type": "button", "label": "运行一次", "action": "run", "params": {"notify": true}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
+        {"type": "button", "label": "刷新机器人列表", "action": "run", "params": {"func": "bots"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
+      ]},
+      {"type": "button", "label": "发送测试通知", "action": "run", "params": {"func": "test_notify", "notify": true}, "style": {"tone": "success", "variant": "soft"}}
+    ]
+  }
+}

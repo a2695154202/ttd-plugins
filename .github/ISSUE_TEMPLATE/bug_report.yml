@@ -1,0 +1,71 @@
+name: Bug 反馈
+description: 报告某个插件运行异常或结果不符合预期
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。提交前请先阅读对应插件目录下的 `README.md`。
+
+        > **请勿粘贴真实 Cookie、密码、OpenAPI Token 或 Telegram 机器人 Token。**
+        > 日志中的代理地址与令牌请先打码，否则该 Issue 会被直接关闭。
+
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: 涉及的插件
+      description: 出问题的是哪个插件？
+      options:
+        - invites-signin（药丸论坛签到）
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本
+      description: 见插件卡片或 plugins.json
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: 安装方式
+      options:
+        - 插件市场安装
+        - 手动导入 .py 单文件
+        - 手动导入 .zip 压缩包
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 实际发生了什么？你期望的结果是什么？
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 「执行功能」选择 ...
+        2. 点击「运行一次」
+        3. 结果页显示 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 运行日志
+      description: 从结果页的「运行日志」窗口复制（请先打码敏感信息）
+      render: text
+    validations:
+      required: false

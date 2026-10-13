@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "text-helper",
+  "name": "文本处理示例",
+  "version": "1.0.0",
+  "description": "按行去重或排序文本，演示参数、运行日志和插件数据保存。",
+  "author": "TgtoDrive",
+  "entry": "plugin.py",
+  "timeout": 30,
+  "inputs": [
+    {
+      "name": "text",
+      "label": "待处理文本",
+      "type": "textarea",
+      "required": true,
+      "default": "苹果\n香蕉\n苹果",
+      "placeholder": "每行一项"
+    },
+    {
+      "name": "action",
+      "label": "处理方式",
+      "type": "select",
+      "default": "unique",
+      "options": [
+        {
+          "label": "去重（保留顺序）",
+          "value": "unique"
+        },
+        {
+          "label": "排序",
+          "value": "sort"
+        }
+      ]
+    },
+    {
+      "name": "strip",
+      "label": "清理每行首尾空白",
+      "type": "boolean",
+      "default": true
+    }
+  ]
+}

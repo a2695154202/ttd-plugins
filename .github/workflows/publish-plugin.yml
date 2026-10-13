@@ -1,0 +1,100 @@
+name: Publish plugin
+
+# 手动触发：打包指定插件 → 创建固定 tag 的 Release → 上传附件 → 刷新 plugins.json
+#
+# 发布前请先在 plugins/<id>/plugin.json 中提升 version，
+# 并在 CHANGELOG.md 中记录变更。
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_id:
+        description: 要发布的插件 id（plugins/ 下的目录名，例如 invites-signin）
+        required: true
+        type: string
+      prerelease:
+        description: 标记为预发布（Pre-release）
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-plugin-${{ inputs.plugin_id }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: 发布 ${{ inputs.plugin_id }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 校验清单并打包
+        run: python scripts/package_plugin.py --plugin "${{ inputs.plugin_id }}"
+
+      - name: 解析版本号与 tag
+        id: meta
+        run: |
+          python - "${{ inputs.plugin_id }}" >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          plugin_id = sys.argv[1]
+          manifest = json.loads(
+              Path(f"plugins/{plugin_id}/plugin.json").read_text(encoding="utf-8")
+          )
+          version = manifest["version"]
+          print(f"version={version}")
+          print(f"title={manifest.get('name', plugin_id)} v{version}")
+          print(f"tag={plugin_id}-v{version}")
+          PY
+
+      - name: 创建或更新 Release 并上传附件
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          PLUGIN_ID="${{ inputs.plugin_id }}"
+          PRE_FLAG=""
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            PRE_FLAG="--prerelease"
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，覆盖附件"
+            gh release upload "$TAG" "dist/${PLUGIN_ID}.py" "dist/${PLUGIN_ID}.zip" --clobber
+          else
+            gh release create "$TAG" \
+              "dist/${PLUGIN_ID}.py" \
+              "dist/${PLUGIN_ID}.zip" \
+              --title "${{ steps.meta.outputs.title }}" \
+              --notes "由 GitHub Actions 自动发布。附件为 CI 实时打包产物，SHA-256 与字节数见仓库根目录的 plugins.json。" \
+              $PRE_FLAG
+          fi
+
+      - name: 刷新 plugins.json
+        run: python scripts/build_marketplace.py --repo "${{ github.repository }}"
+
+      - name: 提交 plugins.json
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- plugins.json; then
+            echo "plugins.json 无变化，跳过提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add plugins.json
+          git commit -m "chore(marketplace): 刷新 plugins.json（${{ inputs.plugin_id }} v${{ steps.meta.outputs.version }}）"
+          git push

@@ -1,0 +1,73 @@
+name: 插件请求
+description: 希望本仓库新增某个插件
+title: "[插件请求] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        说明清楚需求能显著提高被采纳的概率。请尽量填写涉及的服务与接口，不要只写一句“想要个某某插件”。
+
+        > **请勿粘贴真实 Cookie、密码或 Token。**
+
+  - type: input
+    id: name
+    attributes:
+      label: 插件名称
+      placeholder: 例如：某某站点自动签到
+    validations:
+      required: true
+
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 功能说明
+      description: 这个插件要解决什么问题？解决后你的日常流程会有什么变化？
+    validations:
+      required: true
+
+  - type: textarea
+    id: inputs
+    attributes:
+      label: 预期参数
+      description: 你希望界面上出现哪些参数？哪些是必填？
+      placeholder: |
+        - 站点地址（text，必填）
+        - Cookie（password，必填）
+        - 失败重试次数（number，默认 2）
+    validations:
+      required: false
+
+  - type: textarea
+    id: outputs
+    attributes:
+      label: 预期输出
+      description: 希望看到什么结果？表格、文本、图片、还是仅通知？
+    validations:
+      required: false
+
+  - type: input
+    id: services
+    attributes:
+      label: 涉及的服务或接口
+      description: 站点域名、第三方 API 文档地址，或需要调用的 TgtoDrive 接口
+    validations:
+      required: false
+
+  - type: textarea
+    id: schedule
+    attributes:
+      label: 是否需要定时执行
+      description: 如果需要，请描述期望的执行频率
+      placeholder: 每天 08:05 左右
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: acknowledgement
+    attributes:
+      label: 确认
+      options:
+        - label: 我理解插件以 TgtoDrive 服务账户权限运行，且本仓库插件默认以 GPL-3.0 授权
+          required: true
