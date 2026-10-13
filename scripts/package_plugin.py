@@ -25,7 +25,14 @@
 
 压缩包使用 ``ZIP_STORED`` 而非 ``ZIP_DEFLATED``：deflate 的字节输出依赖 zlib
 版本（开发机与 CI 可能不同），会导致同源产物哈希不一致、``plugins.json`` 反复
-被判为「不同步」；不压缩后产物字节完全确定，本地与 CI 结果一致。
+被判为「不同步」。此外还固定了三处会影响字节的元数据：
+
+* 条目时间戳 ``ZIP_DATE_TIME``；
+* 条目顺序（按 POSIX 相对路径排序，避免 Windows 不区分大小写、Linux 区分大小写
+  带来的顺序差异）；
+* ``create_system``（默认随平台为 0 或 3，会写进中央目录）。
+
+以上保证相同源码在任何平台、任何 Python 版本下都得到相同的字节与 SHA-256。
 
 只依赖 Python 标准库，可直接在开发机与 GitHub Actions 上运行。
 """
@@ -172,7 +179,11 @@ def validate_manifest(plugin_dir: Path, manifest: dict) -> list[str]:
 
 def iter_package_files(plugin_dir: Path) -> list[Path]:
     files: list[Path] = []
-    for path in sorted(plugin_dir.rglob("*")):
+    # 显式按 POSIX 相对路径排序：Path 之间的比较在 Windows 上会小写化，
+    # 在 Linux 上区分大小写，同一批文件会得到不同顺序，进而产生不同字节的 zip。
+    for path in sorted(
+        plugin_dir.rglob("*"), key=lambda item: item.relative_to(plugin_dir).as_posix()
+    ):
         if not path.is_file():
             continue
         if any(part in EXCLUDE_DIR_NAMES for part in path.relative_to(plugin_dir).parts[:-1]):
@@ -315,6 +326,9 @@ def build_zip(plugin_dir: Path, out_path: Path) -> int:
             rel = path.relative_to(plugin_dir).as_posix()
             info = zipfile.ZipInfo(rel, date_time=ZIP_DATE_TIME)
             info.compress_type = ZIP_COMPRESS_TYPE
+            # create_system 默认随 sys.platform 变化（Windows=0 FAT / Linux=3 Unix），
+            # 会写进 zip 中央目录并改变整体字节，这里固定为 Unix。
+            info.create_system = 3
             info.external_attr = 0o644 << 16
             archive.writestr(info, path.read_bytes())
     return len(files)
