@@ -3,7 +3,7 @@
   "id": "wecom-notify",
   "name": "企业微信通知",
   "version": "1.0.0",
-  "description": "让 TgtoDrive 具备企业微信（WeCom）应用消息推送能力。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可用文本、markdown 或文本卡片，把任意内容发送给指定成员、部门、标签或全体成员；支持转发代理地址（应对「企业可信IP」限制）、超长消息自动分段、access_token 本地缓存与发送历史。内置「发送测试消息」按钮一键验证通知链路，另有配置自检与可见范围成员查询。",
+  "description": "让 TgtoDrive 具备企业微信（WeCom）应用消息推送能力，并且可以被其他插件调用。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可用文本、markdown、文本卡片或带图卡片通知，把任意内容发送给指定成员、部门、标签或全体成员；支持转发代理地址（应对「企业可信IP」限制）、超长消息自动分段、access_token 本地缓存与发送历史。内置「发送测试消息」按钮一键验证通知链路，「查看调用方法」按钮给出被其他插件调用的完整参数说明与示例代码。",
   "author": "a2695154202",
   "entry": "plugin.py",
   "timeout": 120,
@@ -18,7 +18,8 @@
         {"label": "发送测试消息（固定测试文本）", "value": "test"},
         {"label": "检查配置（获取 access_token）", "value": "config"},
         {"label": "查询应用可见范围成员", "value": "users"},
-        {"label": "查看发送历史（本地记录）", "value": "history"}
+        {"label": "查看发送历史（本地记录）", "value": "history"},
+        {"label": "查看调用方法（供其他插件调用）", "value": "docs"}
       ],
       "help": "顶部右侧的「发送消息」「发送测试消息」按钮会以对应功能立即执行一次。"
     },
@@ -30,9 +31,10 @@
       "options": [
         {"label": "文本 text", "value": "text"},
         {"label": "markdown（推荐，排版更好看）", "value": "markdown"},
-        {"label": "文本卡片 textcard（带标题与跳转按钮）", "value": "textcard"}
+        {"label": "文本卡片 textcard（带标题与跳转按钮）", "value": "textcard"},
+        {"label": "卡片通知 template_card（带图 + 键值列表）", "value": "template_card"}
       ],
-      "help": "text 与 markdown 正文上限 2048 字节（约 680 个汉字），超出会按「超长消息自动分段」处理；textcard 需要同时填「卡片标题」。"
+      "help": "text 与 markdown 正文上限 2048 字节（约 680 个汉字），超出会按「超长消息自动分段」处理；textcard 需要同时填「卡片标题」；选「卡片通知」时请到「卡片通知」页签填写卡片参数。"
     },
     {
       "name": "touser",
@@ -87,7 +89,68 @@
       "type": "textarea",
       "default": "",
       "placeholder": "要推送的正文。markdown 类型支持 # 标题、**加粗**、> 引用、`代码`、<font color=\"info\">彩色</font>、[链接](url) 等子集语法。",
-      "help": "发送测试消息时本项被忽略。文本消息可用 \\n 换行，也支持 <a href=\"...\">文字</a> 链接。"
+      "help": "发送测试消息时本项被忽略。文本消息可用 \\n 换行，也支持 <a href=\"...\">文字</a> 链接。卡片模式下作为卡片的二级文本，建议不超过 112 字。"
+    },
+    {
+      "name": "card_type",
+      "label": "卡片类型",
+      "type": "select",
+      "default": "text_notice",
+      "options": [
+        {"label": "文本通知型 text_notice（大图 + 键值列表）", "value": "text_notice"},
+        {"label": "图文展示型 news_notice（大图 + 竖排图文）", "value": "news_notice"}
+      ],
+      "help": "仅在「消息类型」选择「卡片通知」时生效。图文展示型需要提供卡片图片，未提供时会自动改用文本通知型。"
+    },
+    {
+      "name": "card_image",
+      "label": "卡片图片",
+      "type": "text",
+      "default": "",
+      "placeholder": "https://example.com/cover.jpg 或 /media/cover.jpg",
+      "help": "卡片主图。可填 http(s) 图片链接，也可填容器内已存在的本地图片路径（插件会先上传到企业微信换取图片 URL）。建议尺寸 1068×455、格式 JPG/PNG；图片需能被企业微信服务器访问。"
+    },
+    {
+      "name": "card_source",
+      "label": "卡片来源名称",
+      "type": "text",
+      "default": "",
+      "placeholder": "站点 1PTBA 消息",
+      "help": "显示在卡片左上角的小字，建议不超过 20 字，超出会被截断。"
+    },
+    {
+      "name": "card_source_icon",
+      "label": "来源图标链接",
+      "type": "text",
+      "default": "",
+      "placeholder": "https://example.com/icon.png",
+      "help": "卡片来源名称左侧的小图标，http(s) 链接，可留空。"
+    },
+    {
+      "name": "card_sub_title",
+      "label": "卡片副标题",
+      "type": "text",
+      "default": "",
+      "placeholder": "标题下方的一行说明",
+      "help": "建议不超过 30 字，超出会被截断。"
+    },
+    {
+      "name": "card_items",
+      "label": "卡片键值列表",
+      "type": "textarea",
+      "default": "",
+      "placeholder": "时间=2026-10-13 18:04:48\n季集=S01E15 第 15 集\n分类=日番\n评分=8.5/10",
+      "help": "每行一条「键=值」（也支持冒号或 | 分隔），最多 6 条，超出会被丢弃。企业微信限制：键建议 ≤5 字、值 ≤30 字，超出时插件会主动截断并在日志中说明。"
+    },
+    {
+      "name": "card_aspect_ratio",
+      "label": "卡片图片比例",
+      "type": "number",
+      "default": 2.25,
+      "min": 1.3,
+      "max": 2.25,
+      "step": 0.05,
+      "help": "企业微信允许 1.3–2.25，默认 2.25（宽图）。超出范围会自动收敛到边界值。"
     },
     {
       "name": "channel_name",
@@ -205,6 +268,15 @@
             {"type": "field", "name": "url"},
             {"type": "field", "name": "content"}
           ]},
+          {"type": "card", "label": "卡片通知", "children": [
+            {"type": "field", "name": "card_type"},
+            {"type": "field", "name": "card_image"},
+            {"type": "field", "name": "card_source"},
+            {"type": "field", "name": "card_source_icon"},
+            {"type": "field", "name": "card_sub_title"},
+            {"type": "field", "name": "card_items"},
+            {"type": "field", "name": "card_aspect_ratio"}
+          ]},
           {"type": "card", "label": "应用配置", "children": [
             {"type": "field", "name": "channel_name"},
             {"type": "field", "name": "corp_id"},
@@ -227,11 +299,12 @@
         ]},
         {"type": "group", "style": {"span": 1}, "children": [
           {"type": "button", "label": "发送消息", "action": "run", "params": {"func": "send"}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
-          {"type": "button", "label": "发送测试消息", "action": "run", "params": {"func": "test"}, "style": {"tone": "success", "size": "large", "variant": "soft"}}
+          {"type": "button", "label": "发送测试消息", "action": "run", "params": {"func": "test"}, "style": {"tone": "success", "size": "large", "variant": "soft"}},
+          {"type": "button", "label": "查看调用方法", "action": "run", "params": {"func": "docs"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
         ]}
       ]},
       {"type": "divider"},
-      {"type": "text", "text": "「发送消息」按当前表单内容发送；「发送测试消息」用固定测试文本验证配置，忽略「消息内容」。另有「检查配置」在「应用配置」页签内，「查询可见范围成员」与「查看发送历史」在「执行功能」下拉框中。", "style": {"tone": "muted"}}
+      {"type": "text", "text": "「发送消息」按当前表单内容发送；「发送测试消息」用固定测试文本验证配置，忽略「消息内容」；「查看调用方法」给出被其他插件调用的参数表、示例与在线文档链接。发送带图卡片时请把「消息类型」选为「卡片通知」，卡片参数在「卡片通知」页签填写。另有「检查配置」「查询可见范围成员」「查看发送历史」在「执行功能」下拉框中。", "style": {"tone": "muted"}}
     ]
   }
 }

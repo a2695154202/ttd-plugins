@@ -23,13 +23,13 @@
       "id": "wecom-notify",
       "name": "企业微信通知",
       "version": "1.0.0",
-      "description": "让 TgtoDrive 具备企业微信（WeCom）应用消息推送能力。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可用文本、markdown 或文本卡片，把任意内容发送给指定成员、部门、标签或全体成员；支持转发代理地址（应对「企业可信IP」限制）、超长消息自动分段、access_token 本地缓存与发送历史。内置「发送测试消息」按钮一键验证通知链路，另有配置自检与可见范围成员查询。",
+      "description": "让 TgtoDrive 具备企业微信（WeCom）应用消息推送能力，并且可以被其他插件调用。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可用文本、markdown、文本卡片或带图卡片通知，把任意内容发送给指定成员、部门、标签或全体成员；支持转发代理地址（应对「企业可信IP」限制）、超长消息自动分段、access_token 本地缓存与发送历史。内置「发送测试消息」按钮一键验证通知链路，「查看调用方法」按钮给出被其他插件调用的完整参数说明与示例代码。",
       "author": "a2695154202",
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/wecom-notify",
       "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/wecom-notify-v1.0.0/wecom-notify.zip",
-      "sha256": "fd5b58c4141b0660fe5dfe7ea710a39886b689f97892cb1d8e044ce055c6eae4",
-      "size": 73104,
+      "sha256": "891776a5be5b3d5753175c247ea9cde1ecf72757538427dfcae6b3012bf57acd",
+      "size": 109465,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"

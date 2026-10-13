@@ -6,12 +6,24 @@
 `GET /cgi-bin/gettoken` 与 `POST /cgi-bin/message/send`。
 
 能力
-  * 发送消息：文本 / markdown / 文本卡片三种类型，支持发给成员、部门、标签或 @all。
+  * 发送消息：文本 / markdown / 文本卡片 / **卡片通知（模板卡片）** 四种类型，
+    支持发给成员、部门、标签或 @all。
+  * **卡片通知**：支持带图（图片 URL，或容器内本地图片自动上传换取 URL）、
+    来源名称与图标、键值列表（最多 6 条）、点击跳转链接；
+    可选文本通知型 text_notice 与图文展示型 news_notice。
   * 发送测试消息：用固定测试文本一键验证「应用配置 + 网络 + 收件人」整条链路，
     界面顶部有独立按钮，无需改动「消息内容」。
   * 检查配置：校验必填项格式并真实获取一次 access_token，给出剩余有效期。
   * 查询应用可见范围成员：拉取部门与成员列表，便于填写 UserID。
   * 查看发送历史：本地记录每次发送的类型、收件人、结果与错误码。
+  * **查看调用方法**：输出「被其他插件调用」的参数表与示例，
+    并给出仓库内 CALLING.md 的在线链接。
+
+被其他插件调用
+  * 入口：`POST {TGTO_OPENAPI_BASE_URL}/api/toolbox/plugins/wecom-notify/run`
+    （Bearer 令牌鉴权，请求体 `{"params": {...}}`），结果通过
+    `GET /api/toolbox/plugins/jobs/{job_id}` 查询。
+  * 完整参数表、返回值结构、错误处理与可直接粘贴的示例见同目录 CALLING.md。
 
 实现要点
   * access_token 按「代理地址 + 企业ID」缓存在 data_dir/token.json，
@@ -89,6 +101,7 @@ FUNC_LABELS = {
     "config": "检查配置",
     "users": "查询应用可见范围成员",
     "history": "查看发送历史",
+    "docs": "查看调用方法",
 }
 VALID_FUNCS = tuple(FUNC_LABELS)
 
@@ -96,8 +109,37 @@ MSGTYPE_LABELS = {
     "text": "文本",
     "markdown": "markdown",
     "textcard": "文本卡片",
+    "template_card": "卡片通知（模板卡片）",
 }
 VALID_MSGTYPES = tuple(MSGTYPE_LABELS)
+
+CARD_TYPE_LABELS = {
+    "text_notice": "文本通知型 text_notice（大图 + 键值列表）",
+    "news_notice": "图文展示型 news_notice（大图 + 竖排图文）",
+}
+VALID_CARD_TYPES = tuple(CARD_TYPE_LABELS)
+
+# 模板卡片各字段的企业微信侧建议上限；超出会被企业微信自行截断，
+# 这里主动截断并在日志中说明，避免用户以为内容完整送达。
+CARD_TITLE_LIMIT = 26
+CARD_TITLE_DESC_LIMIT = 30
+CARD_SOURCE_DESC_LIMIT = 20
+CARD_SUB_TITLE_LIMIT = 112
+CARD_KEYNAME_LIMIT = 5
+CARD_VALUE_LIMIT = 30
+CARD_ITEMS_MAX = 6
+CARD_VERTICAL_MAX = 4
+CARD_ASPECT_MIN = 1.3
+CARD_ASPECT_MAX = 2.25
+CARD_ASPECT_DEFAULT = 2.25
+# card_action 在模板卡片中是必填项，缺省时回退到官方站点
+CARD_DEFAULT_ACTION_URL = "https://work.weixin.qq.com"
+
+# 被其他插件调用的方法说明（随仓库分发，供「查看调用方法」按钮指向）
+DOCS_URL = ("https://github.com/a2695154202/ttd-plugins/blob/main/"
+            "plugins/wecom-notify/CALLING.md")
+DOCS_RAW_HINT = ("https://github.com/a2695154202/ttd-plugins/tree/main/"
+                 "plugins/wecom-notify")
 
 # 组装成 UTF-8 摘要出现在结果里的错误提示；errmsg 原样附在后面
 ERRCODE_HINTS = {
@@ -203,6 +245,16 @@ def _i(params, key, default):
         return default
 
 
+def _f(params, key, default):
+    value = params.get(key)
+    if value is None or value == "":
+        return default
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def _mask(value, head=3, tail=3):
     text = str(value or "")
     if not text:
@@ -277,6 +329,54 @@ def _split_content(text, limit_bytes=MESSAGE_BYTE_LIMIT):
     return chunks or [""]
 
 
+def _clip(text, limit):
+    """按字符数截断，返回 (截断后的值, 是否发生过截断)。"""
+    value = str(text or "").strip()
+    if len(value) <= limit:
+        return value, False
+    return value[:limit], True
+
+
+def _parse_card_items(text, limit=CARD_ITEMS_MAX):
+    """把多行「键=值」文本解析成模板卡片的 horizontal_content_list。
+
+    支持 ``键=值``、``键:值``、``键：值``，也支持用 ``|`` 分隔；空行与
+    ``#`` 开头的行会被忽略。返回 ``(items, notes)``，notes 为需要写入日志的说明。
+    """
+    items = []
+    notes = []
+    for raw_line in str(text or "").replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = re.split(r"\s*[=：:]\s*|\s*\|\s*", line, maxsplit=1)
+        if len(parts) < 2:
+            notes.append("忽略无法解析的行（应为「键=值」）：%s" % line[:40])
+            continue
+        key = parts[0].strip()
+        value = parts[1].strip()
+        if not key:
+            notes.append("忽略缺少键的行：%s" % line[:40])
+            continue
+        if len(items) >= limit:
+            notes.append("键值条目超过 %d 条，已丢弃「%s」" % (limit, key))
+            continue
+        short_key, key_cut = _clip(key, CARD_KEYNAME_LIMIT)
+        short_value, value_cut = _clip(value, CARD_VALUE_LIMIT)
+        if key_cut:
+            notes.append("键「%s」超过 %d 字，截断为「%s」"
+                         % (key, CARD_KEYNAME_LIMIT, short_key))
+        if value_cut:
+            notes.append("「%s」的值超过 %d 字，已截断（企业微信侧同样会截断）"
+                         % (short_key, CARD_VALUE_LIMIT))
+        items.append({"keyname": short_key, "value": short_value})
+    return items, notes
+
+
+def _looks_like_url(value):
+    return bool(re.match(r"^https?://", str(value or "").strip(), re.IGNORECASE))
+
+
 # ---------------------------------------------------------------------------
 # HTTP
 # ---------------------------------------------------------------------------
@@ -326,6 +426,69 @@ def _http_request(method, url, params=None, body=None, timeout=None):
         return None, "", None, "%s: %s" % (type(exc).__name__, exc)
 
     data = None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        data = None
+    return status, raw, data, None
+
+
+def _http_upload(url, file_path, timeout=None):
+    """以 multipart/form-data 上传本地文件（字段名 ``media``）。
+
+    返回结构同 :func:`_http_request`。用于把容器内的本地图片换成企业微信可用的图片 URL。
+    """
+    timeout = timeout or (CONNECT_TIMEOUT, READ_TIMEOUT)
+    path = Path(file_path)
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        return None, "", None, "读取本地图片失败：%s" % exc
+
+    suffix = path.suffix.lower().lstrip(".") or "jpg"
+    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "gif": "image/gif"}.get(suffix, "application/octet-stream")
+    filename = path.name or ("image." + suffix)
+
+    if requests is not None:
+        try:
+            response = requests.post(
+                url, files={"media": (filename, content, mime)},
+                timeout=timeout, headers={"User-Agent": USER_AGENT},
+            )
+            text = response.text or ""
+            try:
+                data = response.json()
+            except ValueError:
+                data = None
+            return response.status_code, text, data, None
+        except Exception as exc:
+            return None, "", None, "%s: %s" % (type(exc).__name__, exc)
+
+    boundary = "----TgtoDriveWecomNotify%s" % int(time.time() * 1000)
+    body = b"".join([
+        ("--%s\r\n" % boundary).encode("utf-8"),
+        ('Content-Disposition: form-data; name="media"; filename="%s"\r\n'
+         % filename).encode("utf-8"),
+        ("Content-Type: %s\r\n\r\n" % mime).encode("utf-8"),
+        content,
+        ("\r\n--%s--\r\n" % boundary).encode("utf-8"),
+    ])
+    request = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={"User-Agent": USER_AGENT,
+                 "Content-Type": "multipart/form-data; boundary=%s" % boundary},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout[1]) as response:
+            raw = response.read().decode("utf-8", "replace")
+            status = response.status
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", "replace")
+        status = exc.code
+    except Exception as exc:
+        return None, "", None, "%s: %s" % (type(exc).__name__, exc)
+
     try:
         data = json.loads(raw)
     except ValueError:
@@ -511,6 +674,27 @@ class _WecomClient(object):
         if errcode not in (0, None):
             return None, (errcode, data.get("errmsg", ""))
         return data, None
+
+    # -- 素材 --------------------------------------------------------------
+
+    def upload_image(self, file_path):
+        """把本地图片上传到企业微信换取图片 URL。返回 ``(url, error)``。"""
+        token, error = self.get_token()
+        if error:
+            return None, error
+        status, text, data, error = _http_upload(
+            self.url("/cgi-bin/media/uploadimg"), file_path)
+        if error:
+            return None, "上传本地图片失败：%s" % error
+        if not isinstance(data, dict):
+            return None, "uploadimg 返回非 JSON（HTTP %s）：%s" % (status, (text or "")[:200])
+        if data.get("errcode") not in (0, None):
+            return None, self.describe_error(data.get("errcode"), data.get("errmsg", ""),
+                                             stage="media/uploadimg")
+        url = data.get("url")
+        if not url:
+            return None, "uploadimg 未返回 url：%s" % (text or "")[:200]
+        return str(url), None
 
     # -- 通讯录 ------------------------------------------------------------
 
@@ -752,6 +936,15 @@ class _NotifyRunner(object):
         self.url = _s(self.params, "url")
         self.content = _s(self.params, "content")
 
+        # 模板卡片（卡片通知）相关
+        self.card_type = (_s(self.params, "card_type", "text_notice") or "text_notice").lower()
+        self.card_image = _s(self.params, "card_image")
+        self.card_items = _s(self.params, "card_items")
+        self.card_source = _s(self.params, "card_source")
+        self.card_source_icon = _s(self.params, "card_source_icon")
+        self.card_sub_title = _s(self.params, "card_sub_title")
+        self.card_aspect_ratio = _f(self.params, "card_aspect_ratio", CARD_ASPECT_DEFAULT)
+
         self.split_long = _b(self.params, "split_long", True)
         self.history_days = max(_i(self.params, "history_days", 30), 1)
 
@@ -832,6 +1025,98 @@ class _NotifyRunner(object):
 
     # -- 各功能 ------------------------------------------------------------
 
+    def _resolve_card_image(self):
+        """确定卡片图片 URL：http(s) 直链直接用；容器内本地图片先上传换取 URL。"""
+        value = self.card_image
+        if not value:
+            return ""
+        if _looks_like_url(value):
+            return value
+        path = Path(value)
+        if path.is_file():
+            self.log.info("卡片图片是本地文件，正在上传以换取企业微信图片 URL：%s" % value)
+            url, error = self.client.upload_image(str(path))
+            if error:
+                self.log.warn("本地图片上传失败，卡片将不带图：%s" % error)
+                return ""
+            self.log.info("本地图片上传成功")
+            return url
+        self.log.warn("「卡片图片」既不是 http(s) 链接、也不是存在的本地文件，"
+                      "卡片将不带图：%s" % value)
+        return ""
+
+    def build_template_card(self, content):
+        """组装 template_card 结构（文本通知型 / 图文展示型）。"""
+        card_type = self.card_type if self.card_type in VALID_CARD_TYPES else "text_notice"
+        title, title_cut = _clip(self.title, CARD_TITLE_LIMIT)
+        title_desc, desc_cut = _clip(self.card_sub_title, CARD_TITLE_DESC_LIMIT)
+        body, body_cut = _clip(str(content or "").replace("\n", " ").strip(),
+                               CARD_SUB_TITLE_LIMIT)
+        if title_cut:
+            self.log.warn("卡片标题超过 %d 字，已截断" % CARD_TITLE_LIMIT)
+        if desc_cut:
+            self.log.warn("卡片副标题超过 %d 字，已截断" % CARD_TITLE_DESC_LIMIT)
+        if body_cut:
+            self.log.warn("「消息内容」超过 %d 字，卡片正文已截断" % CARD_SUB_TITLE_LIMIT)
+        if not title and not title_desc and not body:
+            raise ValueError(
+                "卡片通知至少需要填写「卡片标题」或「消息内容」其中之一")
+
+        image_url = self._resolve_card_image()
+        ratio = min(max(self.card_aspect_ratio, CARD_ASPECT_MIN), CARD_ASPECT_MAX)
+        if self.card_aspect_ratio != ratio:
+            self.log.warn("图片比例需在 %.1f–%.1f 之间，已调整为 %.2f"
+                          % (CARD_ASPECT_MIN, CARD_ASPECT_MAX, ratio))
+        action_url = self.url
+        if not action_url:
+            action_url = CARD_DEFAULT_ACTION_URL
+            self.log.warn("模板卡片的 card_action 为必填项，「卡片跳转链接」为空，"
+                          "已回退为 %s" % CARD_DEFAULT_ACTION_URL)
+
+        if card_type == "news_notice" and not image_url:
+            self.log.warn("图文展示型需要卡片图片，「卡片图片」为空，已自动改用文本通知型")
+            card_type = "text_notice"
+
+        card = {"card_type": card_type}
+        if self.card_source:
+            source = {"desc": _clip(self.card_source, CARD_SOURCE_DESC_LIMIT)[0]}
+            if self.card_source_icon:
+                source["icon_url"] = self.card_source_icon
+            card["source"] = source
+
+        if card_type == "news_notice":
+            main = {"title": title or title_desc or "通知"}
+            if title_desc and title:
+                main["desc"] = title_desc
+            card["main_title"] = main
+            card["card_image"] = {"url": image_url, "aspect_ratio": ratio}
+            if body:
+                card["vertical_content_list"] = [{"title": "内容", "desc": body}]
+        else:
+            main = {}
+            if title:
+                main["title"] = title
+            if title_desc:
+                main["desc"] = title_desc
+            if main:
+                card["main_title"] = main
+            if body and (title or title_desc):
+                card["sub_title_text"] = body
+            elif body:
+                card["sub_title_text"] = body
+            if image_url:
+                card["card_image"] = {"url": image_url, "aspect_ratio": ratio}
+            items, notes = _parse_card_items(self.card_items)
+            for note in notes:
+                self.log.warn(note)
+            if items:
+                card["horizontal_content_list"] = items
+                self.log.info("卡片键值列表 %d 条：%s"
+                              % (len(items), "、".join(i["keyname"] for i in items)))
+
+        card["card_action"] = {"type": 1, "url": action_url}
+        return card
+
     def build_payload(self, content_override=None):
         """按当前设置组装一条 message/send 请求体。"""
         try:
@@ -864,11 +1149,17 @@ class _NotifyRunner(object):
                 "url": self.url,
                 "btntxt": "查看详情",
             }
+        elif self.msgtype == "template_card":
+            payload["template_card"] = self.build_template_card(content)
         else:
             raise ValueError("不支持的「消息类型」：%s" % self.msgtype)
 
         if self.safe:
-            payload["safe"] = 1
+            if self.msgtype in ("text", "markdown"):
+                payload["safe"] = 1
+            else:
+                self.log.warn("「%s」类型不支持保密消息（safe），该项已忽略"
+                              % MSGTYPE_LABELS.get(self.msgtype, self.msgtype))
         return payload
 
     def do_send(self, content_override=None, ignore_content=False):
@@ -877,12 +1168,13 @@ class _NotifyRunner(object):
             content = content_override or ""
         else:
             content = self.content
-            if not content:
+            if not content and self.msgtype != "template_card":
                 raise ValueError("「消息内容」为空，请填写后再发送")
 
         self.validate_encoding_key()
-        if self.msgtype == "textcard":
-            self.validate_textcard()
+        if self.msgtype in ("textcard", "template_card"):
+            if self.msgtype == "textcard":
+                self.validate_textcard()
             return self._dispatch([content], segmented=False)
 
         chunks = _split_content(content)
@@ -946,8 +1238,22 @@ class _NotifyRunner(object):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if self.msgtype == "textcard":
             self.title = self.title or "【%s】测试消息" % self.channel_name
-            self.url = self.url or "https://work.weixin.qq.com"
+            self.url = self.url or CARD_DEFAULT_ACTION_URL
             self.log.info("文本卡片的标题/链接为空，已使用测试用默认值")
+        elif self.msgtype == "template_card":
+            self.title = self.title or "【%s】测试消息" % self.channel_name
+            self.url = self.url or CARD_DEFAULT_ACTION_URL
+            if not self.card_source:
+                self.card_source = "%s 测试消息" % self.channel_name
+            if not self.card_items:
+                self.card_items = "\n".join([
+                    "时间=%s" % now,
+                    "渠道=%s" % self.channel_name,
+                    "企业ID=%s" % _mask(self.corp_id),
+                    "AgentId=%s" % (self.agent_id or "-"),
+                    "接口=%s" % self.client.masked_base(),
+                ])
+                self.log.info("测试卡片已自动填充键值列表；发送真实卡片请自行填写「卡片键值列表」")
         elif self.msgtype == "markdown":
             pass
 
@@ -1143,6 +1449,79 @@ class _NotifyRunner(object):
             "ui": {"width": "wide", "layout": "stack", "components": components},
         }
 
+    def do_docs(self):
+        """展示「被其他插件调用」的方法说明与在线文档链接。"""
+        self.log.info("输出被调用方法说明；完整文档：%s" % DOCS_URL)
+
+        params_rows = [
+            ["func", "必填", "send 发送 / test 测试 / config 自检 / users 查成员 / history 查历史"],
+            ["msgtype", "必填", "text / markdown / textcard / template_card（卡片通知）"],
+            ["touser", "常用", "UserID，多个用 | 分隔；@all 表示该应用全体可见成员"],
+            ["toparty / totag", "可选", "部门 ID / 标签 ID，touser 为 @all 时被忽略"],
+            ["title", "卡片", "卡片标题（template_card 与 textcard 使用）"],
+            ["content", "常用", "正文；卡片模式下作为二级文本（≤112 字）"],
+            ["card_image", "卡片", "卡片主图：http(s) 链接，或容器内本地图片路径（自动上传换取 URL）"],
+            ["card_items", "卡片", "键值列表，每行一条「键=值」，最多 6 条（键 ≤5 字、值 ≤30 字）"],
+            ["card_source", "卡片", "卡片来源名称，例如「站点 1PTBA 消息」"],
+            ["card_source_icon", "卡片", "来源图标 URL"],
+            ["card_type", "卡片", "text_notice（默认，大图+键值列表）/ news_notice（图文展示型）"],
+            ["url", "卡片", "卡片点击跳转链接；模板卡片的 card_action 为必填项"],
+        ]
+
+        sample = (
+            "import requests\n"
+            "\n"
+            "BASE  = \"http://127.0.0.1:12366\"   # TgtoDrive 地址（同容器常用该地址）\n"
+            "TOKEN = \"YOUR_OPENAPI_TOKEN\"       # 调用方自行读取，勿硬编码\n"
+            "\n"
+            "resp = requests.post(\n"
+            "    BASE + \"/api/toolbox/plugins/wecom-notify/run\",\n"
+            "    headers={\"Authorization\": \"Bearer \" + TOKEN},\n"
+            "    json={\"params\": {\n"
+            "        \"func\": \"send\",\n"
+            "        \"msgtype\": \"template_card\",\n"
+            "        \"touser\": \"@all\",\n"
+            "        \"title\": \"新入库剧集：示例标题\",\n"
+            "        \"card_source\": \"站点 1PTBA 消息\",\n"
+            "        \"card_image\": \"https://example.com/cover.jpg\",\n"
+            "        \"card_items\": \"时间=2026-10-13 18:04\\n分类=日番\\n评分=8.5/10\",\n"
+            "        \"url\": \"https://example.com/detail\",\n"
+            "    }},\n"
+            "    timeout=(5, 30),\n"
+            ")\n"
+            "job = resp.json()          # 含 job_id\n"
+            "# 需要结果时轮询：\n"
+            "# GET {BASE}/api/toolbox/plugins/jobs/{job_id}\n"
+        )
+
+        components = [
+            {"type": "heading", "text": "被其他插件调用"},
+            {"type": "markdown", "text": (
+                "本插件可以通过 TgtoDrive OpenAPI 被**其他插件或脚本**调用，"
+                "用于发送企业微信通知（文本、markdown、文本卡片或带图卡片）。\n\n"
+                "**完整调用说明（参数表 / 返回值 / 错误处理 / 完整示例）：**\n\n"
+                "- [plugins/wecom-notify/CALLING.md](%s)\n\n"
+                "调用入口：`POST /api/toolbox/plugins/wecom-notify/run`" % DOCS_URL)},
+            {"type": "table", "label": "常用参数（完整列表见 CALLING.md）",
+             "headers": ["参数", "场景", "说明"], "rows": params_rows},
+            {"type": "heading", "text": "最小示例（Python）"},
+            {"type": "code", "text": sample},
+            {"type": "alert", "text": (
+                "令牌请由调用方自行读取（环境变量 TGTO_OPENAPI_TOKEN 或自己的插件设置），"
+                "不要写进插件包或日志。被调用时同样遵守插件协议：单次同步执行、"
+                "返回值 ≤1 MiB、到 timeout 即结束。"),
+             "style": {"tone": "muted"}},
+            {"type": "divider"},
+            {"type": "heading", "text": "运行日志"},
+            {"type": "code", "text": self.log.text()},
+        ]
+        return {
+            "status": "ok",
+            "func": self.func,
+            "docs_url": DOCS_URL,
+            "ui": {"width": "wide", "layout": "stack", "components": components},
+        }
+
     # -- 历史与结果 --------------------------------------------------------
 
     def _record(self, status, msgid, error="", invalid=""):
@@ -1224,6 +1603,10 @@ class _NotifyRunner(object):
             raise ValueError("不支持的消息类型：%s" % self.msgtype)
 
         self.log.info("企业微信通知启动，执行功能：%s" % FUNC_LABELS.get(self.func, self.func))
+        if self.func == "docs":
+            # 纯文档输出，不需要任何配置与网络请求
+            return self.do_docs()
+
         self.prepare_config()
 
         if self.func == "config":
