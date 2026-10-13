@@ -15,13 +15,13 @@
       "default": "send",
       "options": [
         {"label": "发送消息（按下方内容）", "value": "send"},
-        {"label": "发送测试消息（固定测试文本）", "value": "test"},
+        {"label": "发送测试消息（按两个内容框发送）", "value": "test"},
         {"label": "检查配置（获取 access_token）", "value": "config"},
         {"label": "查询应用可见范围成员", "value": "users"},
         {"label": "查看发送历史（本地记录）", "value": "history"},
         {"label": "查看调用方法（供其他插件调用）", "value": "docs"}
       ],
-      "help": "顶部右侧的「发送消息」「发送测试消息」按钮会以对应功能立即执行一次。"
+      "help": "顶部右侧「发送消息」按「消息类型」发送「文本消息内容」；「发送测试消息」会先检查两个内容框 —— 都有内容就依次发送（间隔 3 秒），只有一条就只发一条，都没有则报错。"
     },
     {
       "name": "msgtype",
@@ -85,11 +85,11 @@
     },
     {
       "name": "content",
-      "label": "消息内容",
+      "label": "文本消息内容",
       "type": "textarea",
-      "default": "",
-      "placeholder": "要推送的正文。markdown 类型支持 # 标题、**加粗**、> 引用、`代码`、<font color=\"info\">彩色</font>、[链接](url) 等子集语法。",
-      "help": "发送测试消息时本项被忽略。文本消息可用 \\n 换行，也支持 <a href=\"...\">文字</a> 链接。卡片模式下作为卡片的二级文本，建议不超过 112 字。"
+      "default": "【企业微信通知】测试文本消息\n如果你收到这条消息，说明文本通知链路已经打通。\n可在本框修改内容后重新点「发送测试消息」。",
+      "placeholder": "文本 / markdown 正文。markdown 支持 # 标题、**加粗**、> 引用、`代码`、<font color=\"info\">彩色</font>、[链接](url) 等子集语法。",
+      "help": "「发送消息」按钮按「消息类型」发送本框内容；「发送测试消息」会先检查本框与「卡片消息内容」，有哪个就发哪个、两个都有就都发（间隔 3 秒）。"
     },
     {
       "name": "card_type",
@@ -106,9 +106,9 @@
       "name": "card_image",
       "label": "卡片图片",
       "type": "text",
-      "default": "",
-      "placeholder": "https://example.com/cover.jpg 或 /media/cover.jpg",
-      "help": "卡片主图。可填 http(s) 图片链接，也可填容器内已存在的本地图片路径（插件会先上传到企业微信换取图片 URL）。建议尺寸 1068×455、格式 JPG/PNG；图片需能被企业微信服务器访问。"
+      "default": "http://192.168.101.100:12366/static/brand_logo.png?v=18de0d2b37259200-5d57",
+      "placeholder": "https://example.com/cover.jpg",
+      "help": "卡片主图。可填 http(s) 链接，也可填容器内已存在的本地图片路径。注意：企业微信服务器访问不到内网地址（如 192.168.x.x / 10.x.x.x / localhost），插件检测到这类地址时会先自行下载，再上传到企业微信换取可用的图片 URL，确保卡片能显示出图。建议尺寸 1068×455、格式 JPG/PNG、不超过 2 MB。"
     },
     {
       "name": "card_source",
@@ -135,12 +135,12 @@
       "help": "建议不超过 30 字，超出会被截断。"
     },
     {
-      "name": "card_items",
-      "label": "卡片键值列表",
+      "name": "card_content",
+      "label": "卡片消息内容",
       "type": "textarea",
-      "default": "",
-      "placeholder": "时间=2026-10-13 18:04:48\n季集=S01E15 第 15 集\n分类=日番\n评分=8.5/10",
-      "help": "每行一条「键=值」（也支持冒号或 | 分隔），最多 6 条，超出会被丢弃。企业微信限制：键建议 ≤5 字、值 ≤30 字，超出时插件会主动截断并在日志中说明。"
+      "default": "状态=测试成功\n类型=卡片通知\n说明=收到这张卡片说明通知链路已经打通\n提示=可在「卡片通知」页签调整卡片参数",
+      "placeholder": "每行一条「键=值」，最多 6 条，显示为卡片的键值列表；\n若整段都不是键值格式，则整段作为卡片的二级文本显示。",
+      "help": "支持多行。每行一条「键=值」（= : ： | 均可分隔），最多 6 条；整段没有键值格式时，会作为卡片的二级文本（≤112 字）。企业微信限制键 ≤5 字、值 ≤30 字，超出时插件会主动截断并在日志中说明。"
     },
     {
       "name": "card_aspect_ratio",
@@ -266,7 +266,9 @@
             {"type": "field", "name": "safe"},
             {"type": "field", "name": "title"},
             {"type": "field", "name": "url"},
-            {"type": "field", "name": "content"}
+            {"type": "divider"},
+            {"type": "field", "name": "content", "style": {"size": "large"}},
+            {"type": "field", "name": "card_content", "style": {"size": "large"}}
           ]},
           {"type": "card", "label": "卡片通知", "children": [
             {"type": "field", "name": "card_type"},
@@ -274,7 +276,6 @@
             {"type": "field", "name": "card_source"},
             {"type": "field", "name": "card_source_icon"},
             {"type": "field", "name": "card_sub_title"},
-            {"type": "field", "name": "card_items"},
             {"type": "field", "name": "card_aspect_ratio"}
           ]},
           {"type": "card", "label": "应用配置", "children": [
@@ -304,7 +305,7 @@
         ]}
       ]},
       {"type": "divider"},
-      {"type": "text", "text": "「发送消息」按当前表单内容发送；「发送测试消息」用固定测试文本验证配置，忽略「消息内容」；「查看调用方法」给出被其他插件调用的参数表、示例与在线文档链接。发送带图卡片时请把「消息类型」选为「卡片通知」，卡片参数在「卡片通知」页签填写。另有「检查配置」「查询可见范围成员」「查看发送历史」在「执行功能」下拉框中。", "style": {"tone": "muted"}}
+      {"type": "text", "text": "「发送测试消息」会检查「文本消息内容」与「卡片消息内容」：两个都填了就先发文本、间隔 3 秒再发卡片（两条通知），只填一个就只发一条，都没填会报错。「发送消息」按「消息类型」发送「文本消息内容」。卡片的图片、来源等参数在「卡片通知」页签；「查看调用方法」给出被其他插件调用的参数表、示例与在线文档链接。", "style": {"tone": "muted"}}
     ]
   }
 }

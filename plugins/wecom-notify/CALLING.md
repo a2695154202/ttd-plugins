@@ -81,7 +81,7 @@ def notify_via_wecom(content, title="TgtoDrive 通知"):
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
-| `func` | string | `send` 发送 / `test` 测试 / `config` 自检 / `users` 查成员 / `history` 查历史 / `docs` 查看调用方法 |
+| `func` | string | `send` 发送 / `test` 测试 / `config` 自检 / `users` 查成员 / `history` 查历史 / `docs` 查看调用方法。`test` 会按 `content` 与 `card_content` 依次发送（都有内容时中间间隔 3 秒） |
 | `msgtype` | string | `text` / `markdown` / `textcard` / `template_card`（卡片通知） |
 | `touser` | string | 成员 UserID，多个用 `\|` 分隔；`@all` 表示该应用全体可见成员 |
 | `toparty` / `totag` | string | 部门 ID / 标签 ID，`touser` 为 `@all` 时被忽略 |
@@ -94,7 +94,7 @@ def notify_via_wecom(content, title="TgtoDrive 通知"):
 | `card_source` | string | 卡片来源名称，例如「站点 1PTBA 消息」 |
 | `card_source_icon` | string | 来源图标 URL |
 | `card_sub_title` | string | 卡片副标题（≤30 字） |
-| `card_items` | string | 键值列表，**每行一条 `键=值`**，最多 6 条 |
+| `card_content` | string | 卡片消息内容：每行一条 `键=值`（最多 6 条）显示为键值列表；整段不是键值格式时作为卡片正文（≤112 字）。兼容旧字段名 `card_items` |
 | `card_aspect_ratio` | number | 图片比例 1.3–2.25，默认 2.25 |
 | `split_long` | bool | 超长正文是否自动分段，默认 `true` |
 | `channel_name` / `corp_id` / `agent_id` / `corp_secret` / `api_base` / `token` / `encoding_aes_key` / `admin_users` / `history_days` / `tgto_base_url` / `tgto_token` | — | 配置类字段，**一般不必传**，沿用用户已保存的设置 |
@@ -207,7 +207,7 @@ def notify_and_wait(content, timeout=60):
   "title": "新入库剧集：遭到流放的转生重骑士",
   "card_source": "站点 1PTBA 消息",
   "card_image": "https://example.com/cover.jpg",
-  "card_items": "时间=2026-10-13 18:04:48\n季集=S01E15 第 15 集\n分类=日番\n评分=8.5/10",
+  "card_content": "时间=2026-10-13 18:04:48\n季集=S01E15 第 15 集\n分类=日番\n评分=8.5/10",
   "url": "https://example.com/detail",
 }
 ```
@@ -221,12 +221,36 @@ def notify_and_wait(content, timeout=60):
 ```
 
 插件会先把图片上传到企业微信（`/cgi-bin/media/uploadimg`）换取图片 URL 再发卡片。
-若上传失败，卡片会不带图继续发送，并在日志中给出原因。
 
-### 5. 只做连通性验证
+**内网地址也是可以的**：因为企业微信服务器访问不到 `192.168.x.x` / `10.x.x.x` / `127.0.0.1`
+这类地址，插件检测到内网图片链接时会先自行下载，再上传换取企业微信可访问的 URL：
 
 ```python
-{"func": "test", "msgtype": "text", "touser": "@all"}
+{"func": "send", "msgtype": "template_card", "title": "带图卡片",
+ "card_image": "http://192.168.101.100:12366/static/brand_logo.png",
+ "url": "https://example.com/detail"}
+```
+
+上传失败时会退回使用原地址并给出警告（此时卡片上的图片可能显示不出来）。
+
+### 5. 内容驱动的一键测试
+
+```python
+{"func": "test",
+ "content": "文本测试内容",
+ "card_content": "状态=测试成功\n类型=卡片通知"}
+```
+
+`test` 会检查 `content` 与 `card_content` 两个内容框：
+
+- 两个都有内容 → 先发文本消息，**间隔 3 秒**再发卡片消息（共两条通知）；
+- 只有一个有内容 → 只发这一条；
+- 两个都为空 → 报错 `「文本消息内容」与「卡片消息内容」都为空`。
+
+单条测试：
+
+```python
+{"func": "test", "content": "只测文本"}
 ```
 
 ---

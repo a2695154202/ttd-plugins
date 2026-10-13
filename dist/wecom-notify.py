@@ -23,7 +23,7 @@ PLUGIN_MANIFEST = {
           'value': 'send',
         },
         {
-          'label': '发送测试消息（固定测试文本）',
+          'label': '发送测试消息（按两个内容框发送）',
           'value': 'test',
         },
         {
@@ -43,7 +43,7 @@ PLUGIN_MANIFEST = {
           'value': 'docs',
         },
       ],
-      'help': '顶部右侧的「发送消息」「发送测试消息」按钮会以对应功能立即执行一次。',
+      'help': '顶部右侧「发送消息」按「消息类型」发送「文本消息内容」；「发送测试消息」会先检查两个内容框 —— 都有内容就依次发送（间隔 3 秒），只有一条就只发一条，都没有则报错。',
     },
     {
       'name': 'msgtype',
@@ -119,11 +119,11 @@ PLUGIN_MANIFEST = {
     },
     {
       'name': 'content',
-      'label': '消息内容',
+      'label': '文本消息内容',
       'type': 'textarea',
-      'default': '',
-      'placeholder': '要推送的正文。markdown 类型支持 # 标题、**加粗**、> 引用、`代码`、<font color="info">彩色</font>、[链接](url) 等子集语法。',
-      'help': '发送测试消息时本项被忽略。文本消息可用 \\n 换行，也支持 <a href="...">文字</a> 链接。卡片模式下作为卡片的二级文本，建议不超过 112 字。',
+      'default': '【企业微信通知】测试文本消息\n如果你收到这条消息，说明文本通知链路已经打通。\n可在本框修改内容后重新点「发送测试消息」。',
+      'placeholder': '文本 / markdown 正文。markdown 支持 # 标题、**加粗**、> 引用、`代码`、<font color="info">彩色</font>、[链接](url) 等子集语法。',
+      'help': '「发送消息」按钮按「消息类型」发送本框内容；「发送测试消息」会先检查本框与「卡片消息内容」，有哪个就发哪个、两个都有就都发（间隔 3 秒）。',
     },
     {
       'name': 'card_type',
@@ -146,9 +146,9 @@ PLUGIN_MANIFEST = {
       'name': 'card_image',
       'label': '卡片图片',
       'type': 'text',
-      'default': '',
-      'placeholder': 'https://example.com/cover.jpg 或 /media/cover.jpg',
-      'help': '卡片主图。可填 http(s) 图片链接，也可填容器内已存在的本地图片路径（插件会先上传到企业微信换取图片 URL）。建议尺寸 1068×455、格式 JPG/PNG；图片需能被企业微信服务器访问。',
+      'default': 'http://192.168.101.100:12366/static/brand_logo.png?v=18de0d2b37259200-5d57',
+      'placeholder': 'https://example.com/cover.jpg',
+      'help': '卡片主图。可填 http(s) 链接，也可填容器内已存在的本地图片路径。注意：企业微信服务器访问不到内网地址（如 192.168.x.x / 10.x.x.x / localhost），插件检测到这类地址时会先自行下载，再上传到企业微信换取可用的图片 URL，确保卡片能显示出图。建议尺寸 1068×455、格式 JPG/PNG、不超过 2 MB。',
     },
     {
       'name': 'card_source',
@@ -175,12 +175,12 @@ PLUGIN_MANIFEST = {
       'help': '建议不超过 30 字，超出会被截断。',
     },
     {
-      'name': 'card_items',
-      'label': '卡片键值列表',
+      'name': 'card_content',
+      'label': '卡片消息内容',
       'type': 'textarea',
-      'default': '',
-      'placeholder': '时间=2026-10-13 18:04:48\n季集=S01E15 第 15 集\n分类=日番\n评分=8.5/10',
-      'help': '每行一条「键=值」（也支持冒号或 | 分隔），最多 6 条，超出会被丢弃。企业微信限制：键建议 ≤5 字、值 ≤30 字，超出时插件会主动截断并在日志中说明。',
+      'default': '状态=测试成功\n类型=卡片通知\n说明=收到这张卡片说明通知链路已经打通\n提示=可在「卡片通知」页签调整卡片参数',
+      'placeholder': '每行一条「键=值」，最多 6 条，显示为卡片的键值列表；\n若整段都不是键值格式，则整段作为卡片的二级文本显示。',
+      'help': '支持多行。每行一条「键=值」（= : ： | 均可分隔），最多 6 条；整段没有键值格式时，会作为卡片的二级文本（≤112 字）。企业微信限制键 ≤5 字、值 ≤30 字，超出时插件会主动截断并在日志中说明。',
     },
     {
       'name': 'card_aspect_ratio',
@@ -351,8 +351,21 @@ PLUGIN_MANIFEST = {
                     'name': 'url',
                   },
                   {
+                    'type': 'divider',
+                  },
+                  {
                     'type': 'field',
                     'name': 'content',
+                    'style': {
+                      'size': 'large',
+                    },
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'card_content',
+                    'style': {
+                      'size': 'large',
+                    },
                   },
                 ],
               },
@@ -379,10 +392,6 @@ PLUGIN_MANIFEST = {
                   {
                     'type': 'field',
                     'name': 'card_sub_title',
-                  },
-                  {
-                    'type': 'field',
-                    'name': 'card_items',
                   },
                   {
                     'type': 'field',
@@ -525,7 +534,7 @@ PLUGIN_MANIFEST = {
       },
       {
         'type': 'text',
-        'text': '「发送消息」按当前表单内容发送；「发送测试消息」用固定测试文本验证配置，忽略「消息内容」；「查看调用方法」给出被其他插件调用的参数表、示例与在线文档链接。发送带图卡片时请把「消息类型」选为「卡片通知」，卡片参数在「卡片通知」页签填写。另有「检查配置」「查询可见范围成员」「查看发送历史」在「执行功能」下拉框中。',
+        'text': '「发送测试消息」会检查「文本消息内容」与「卡片消息内容」：两个都填了就先发文本、间隔 3 秒再发卡片（两条通知），只填一个就只发一条，都没填会报错。「发送消息」按「消息类型」发送「文本消息内容」。卡片的图片、来源等参数在「卡片通知」页签；「查看调用方法」给出被其他插件调用的参数表、示例与在线文档链接。',
         'style': {
           'tone': 'muted',
         },
@@ -548,8 +557,9 @@ PLUGIN_MANIFEST = {
   * **卡片通知**：支持带图（图片 URL，或容器内本地图片自动上传换取 URL）、
     来源名称与图标、键值列表（最多 6 条）、点击跳转链接；
     可选文本通知型 text_notice 与图文展示型 news_notice。
-  * 发送测试消息：用固定测试文本一键验证「应用配置 + 网络 + 收件人」整条链路，
-    界面顶部有独立按钮，无需改动「消息内容」。
+  * 发送测试消息（界面顶部独立按钮）：按「文本消息内容」与「卡片消息内容」两个
+    输入框自动决定发送条数 —— 两个都有内容就依次发送（间隔 3 秒，共两条通知），
+    只有一条就只发一条，都没有则报错。
   * 检查配置：校验必填项格式并真实获取一次 access_token，给出剩余有效期。
   * 查询应用可见范围成员：拉取部门与成员列表，便于填写 UserID。
   * 查看发送历史：本地记录每次发送的类型、收件人、结果与错误码。
@@ -703,14 +713,9 @@ AES_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{43}$")
 # 企业 ID 常见形态：以 ww / wx 开头，总长 18 位左右；只做温和提示，不做硬校验
 CORP_ID_RE = re.compile(r"^w[a-z0-9]{10,}$", re.IGNORECASE)
 
-TEST_MESSAGE_SOURCE = (
-    "【{channel}】测试消息\n"
-    "时间：{now}\n"
-    "企业ID：{corp_id}\n"
-    "AgentId：{agent_id}\n"
-    "接口地址：{api_base}\n"
-    "如果你收到这条消息，说明 TgtoDrive 的企业微信通知链路已经打通。"
-)
+# 「发送测试消息」同时发送文本与卡片时，两条之间的间隔（秒）。
+# 这是同一个任务内的发送间隔，不是等待下次执行，符合插件协议。
+TEST_SEND_GAP_SECONDS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -912,6 +917,63 @@ def _parse_card_items(text, limit=CARD_ITEMS_MAX):
 
 def _looks_like_url(value):
     return bool(re.match(r"^https?://", str(value or "").strip(), re.IGNORECASE))
+
+
+def _is_private_host(url):
+    """判断 URL 是否指向内网 / 本机地址。
+
+    企业微信服务器无法访问这类地址，卡片图片必须先由插件下载后上传换取可用 URL。
+    """
+    try:
+        host = (urllib.parse.urlparse(str(url or "")).hostname or "").lower()
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        return True
+    if host.endswith(".local") or host.endswith(".lan") or host.endswith(".internal"):
+        return True
+    match = re.match(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$", host)
+    if not match:
+        return False
+    first, second = int(match.group(1)), int(match.group(2))
+    if first == 10:
+        return True
+    if first == 192 and second == 168:
+        return True
+    if first == 172 and 16 <= second <= 31:
+        return True
+    if first == 169 and second == 254:
+        return True
+    return False
+
+
+def _http_download(url, max_bytes=2 * 1024 * 1024, timeout=None):
+    """下载 URL 内容并限制大小（企业微信上传图片上限 2 MB）。返回 (bytes, error)。"""
+    timeout = timeout or (CONNECT_TIMEOUT, READ_TIMEOUT)
+    if requests is not None:
+        try:
+            response = requests.get(url, timeout=timeout, stream=True,
+                                    headers={"User-Agent": USER_AGENT})
+            if response.status_code != 200:
+                return None, "HTTP %s" % response.status_code
+            data = response.content
+        except Exception as exc:
+            return None, "%s: %s" % (type(exc).__name__, exc)
+    else:
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout[1]) as response:
+                data = response.read(max_bytes + 1)
+        except Exception as exc:
+            return None, "%s: %s" % (type(exc).__name__, exc)
+
+    if len(data) > max_bytes:
+        return None, "图片超过 %d KB" % (max_bytes // 1024)
+    if not data:
+        return None, "下载到的内容为空"
+    return data, None
 
 
 # ---------------------------------------------------------------------------
@@ -1476,7 +1538,9 @@ class _NotifyRunner(object):
         # 模板卡片（卡片通知）相关
         self.card_type = (_s(self.params, "card_type", "text_notice") or "text_notice").lower()
         self.card_image = _s(self.params, "card_image")
-        self.card_items = _s(self.params, "card_items")
+        # 「卡片消息内容」；同时兼容早期字段名 card_items
+        self.card_content = _s(self.params, "card_content") or _s(self.params, "card_items")
+        self.card_items = self.card_content
         self.card_source = _s(self.params, "card_source")
         self.card_source_icon = _s(self.params, "card_source_icon")
         self.card_sub_title = _s(self.params, "card_sub_title")
@@ -1562,12 +1626,54 @@ class _NotifyRunner(object):
 
     # -- 各功能 ------------------------------------------------------------
 
+    def _relay_private_image(self, image_url):
+        """把内网图片下载后上传到企业微信，换取企业微信可访问的图片 URL。"""
+        data, error = _http_download(image_url)
+        if error:
+            self.log.warn("下载内网图片失败：%s" % error)
+            return ""
+
+        suffix = ".png" if ".png" in image_url.lower() else ".jpg"
+        target = Path(self.data_dir) / "_tmp" / ("card_image" + suffix)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        except OSError as exc:
+            self.log.warn("临时图片写入失败：%s" % exc)
+            return ""
+
+        try:
+            new_url, error = self.client.upload_image(str(target))
+        finally:
+            try:
+                target.unlink()
+            except OSError:
+                pass
+
+        if error:
+            self.log.warn("内网图片上传失败：%s" % error)
+            return ""
+        self.log.info("内网图片已搬运到企业微信，卡片将使用该 URL")
+        return new_url
+
     def _resolve_card_image(self):
-        """确定卡片图片 URL：http(s) 直链直接用；容器内本地图片先上传换取 URL。"""
+        """确定卡片图片 URL。
+
+        规则：容器内本地文件 → 上传；内网 http(s) 地址（企业微信服务器访问不到）
+        → 先下载再上传换取可用 URL；公网 http(s) 地址 → 直接使用。
+        """
         value = self.card_image
         if not value:
             return ""
         if _looks_like_url(value):
+            if not _is_private_host(value):
+                return value
+            self.log.warn("卡片图片是内网地址（企业微信服务器无法访问），"
+                          "正在下载后上传以换取可用 URL：%s" % value)
+            relayed = self._relay_private_image(value)
+            if relayed:
+                return relayed
+            self.log.warn("搬运失败，仍使用原地址 —— 卡片上的图片可能显示不出来")
             return value
         path = Path(value)
         if path.is_file():
@@ -1771,38 +1877,95 @@ class _NotifyRunner(object):
         return "；".join(parts) or "（未指定）"
 
     def do_test(self):
-        """发送测试消息：忽略「消息内容」，用固定文本。"""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        if self.msgtype == "textcard":
-            self.title = self.title or "【%s】测试消息" % self.channel_name
-            self.url = self.url or CARD_DEFAULT_ACTION_URL
-            self.log.info("文本卡片的标题/链接为空，已使用测试用默认值")
-        elif self.msgtype == "template_card":
-            self.title = self.title or "【%s】测试消息" % self.channel_name
-            self.url = self.url or CARD_DEFAULT_ACTION_URL
-            if not self.card_source:
-                self.card_source = "%s 测试消息" % self.channel_name
-            if not self.card_items:
-                self.card_items = "\n".join([
-                    "时间=%s" % now,
-                    "渠道=%s" % self.channel_name,
-                    "企业ID=%s" % _mask(self.corp_id),
-                    "AgentId=%s" % (self.agent_id or "-"),
-                    "接口=%s" % self.client.masked_base(),
-                ])
-                self.log.info("测试卡片已自动填充键值列表；发送真实卡片请自行填写「卡片键值列表」")
-        elif self.msgtype == "markdown":
-            pass
+        """发送测试消息：按「文本消息内容」与「卡片消息内容」两个输入框发送。
 
-        content = TEST_MESSAGE_SOURCE.format(
-            channel=self.channel_name,
-            now=now,
-            corp_id=_mask(self.corp_id),
-            agent_id=self.agent_id or "（未填写）",
-            api_base=self.client.masked_base(),
-        )
-        self.log.info("开始发送测试消息（%s 类型）" % MSGTYPE_LABELS.get(self.msgtype, self.msgtype))
-        return self.do_send(content_override=content, ignore_content=True)
+        - 两个都有内容 → 先发文本，间隔 3 秒再发卡片（共两条通知）
+        - 只有一个有内容 → 只发那一条
+        - 两个都为空 → 报错
+        """
+        text_body = self.content.strip()
+        card_body = self.card_content.strip()
+        if not text_body and not card_body:
+            raise ValueError(
+                "「文本消息内容」与「卡片消息内容」都为空，请至少填写一个再发送")
+
+        # 文本消息的具体类型沿用「消息类型」设置（只取纯文本类，卡片单独处理）
+        text_kind = self.msgtype if self.msgtype in ("text", "markdown", "textcard") else "text"
+
+        plans = []
+        if text_body:
+            plans.append((text_kind, "文本消息", text_body))
+        if card_body:
+            plans.append(("template_card", "卡片消息", card_body))
+
+        self.log.info("发送测试消息：共 %d 条（%s）"
+                      % (len(plans), "、".join(plan[1] for plan in plans)))
+        if len(plans) > 1:
+            self.log.info("两条之间间隔 %d 秒发送" % TEST_SEND_GAP_SECONDS)
+
+        original_msgtype = self.msgtype
+        outcomes = []
+        failures = []
+        try:
+            for index, (kind, label, body) in enumerate(plans):
+                if index:
+                    self.log.info("等待 %d 秒后发送下一条…" % TEST_SEND_GAP_SECONDS)
+                    time.sleep(TEST_SEND_GAP_SECONDS)
+
+                self.msgtype = kind
+                if kind == "template_card":
+                    self.title = self.title or "【%s】测试消息" % self.channel_name
+                    self.url = self.url or CARD_DEFAULT_ACTION_URL
+                    self.card_source = self.card_source or ("%s 测试消息" % self.channel_name)
+
+                self.log.info("→ 发送%s" % label)
+                outcome = self._dispatch([body], segmented=False)
+                outcomes.append((label, kind, outcome))
+                if outcome.get("status") != "ok":
+                    failures.append("%s：%s" % (label, outcome.get("error") or "发送失败"))
+        finally:
+            self.msgtype = original_msgtype
+
+        rows = []
+        msgids = []
+        for label, kind, outcome in outcomes:
+            msgids.extend(outcome.get("msgids") or [])
+            rows.append([
+                label,
+                MSGTYPE_LABELS.get(kind, kind),
+                "成功" if outcome.get("status") == "ok" else "失败",
+                "、".join(outcome.get("msgids") or []) or (outcome.get("error") or "-")[:60],
+            ])
+        while len(rows) < 2:
+            rows.append(["-", "-", "未填写，已跳过", "-"])
+
+        ok = not failures
+        if not ok:
+            summary = failures[0]
+        elif len(outcomes) > 1:
+            summary = "两条通知都已发送成功（间隔 %d 秒）。" % TEST_SEND_GAP_SECONDS
+        else:
+            summary = "测试通知已发送成功。"
+
+        components = [
+            {"type": "heading", "text": "发送测试消息"},
+            {"type": "alert", "text": summary,
+             "style": {"tone": "success" if ok else "danger"}},
+            {"type": "table", "label": "本次发送（按内容框自动决定条数）",
+             "headers": ["内容框", "消息类型", "结果", "msgid / 错误"], "rows": rows},
+            {"type": "divider"},
+            {"type": "heading", "text": "运行日志"},
+            {"type": "code", "text": self.log.text()},
+        ]
+        return {
+            "status": "ok" if ok else "failed",
+            "func": self.func,
+            "batches_total": len(plans),
+            "batches_ok": len([o for _, _, o in outcomes if o.get("status") == "ok"]),
+            "msgids": msgids,
+            "error": failures[0] if failures else "",
+            "ui": {"width": "wide", "layout": "stack", "components": components},
+        }
 
     def do_config_check(self):
         """配置自检：格式校验 + 真实获取一次 access_token。"""
@@ -1996,9 +2159,9 @@ class _NotifyRunner(object):
             ["touser", "常用", "UserID，多个用 | 分隔；@all 表示该应用全体可见成员"],
             ["toparty / totag", "可选", "部门 ID / 标签 ID，touser 为 @all 时被忽略"],
             ["title", "卡片", "卡片标题（template_card 与 textcard 使用）"],
-            ["content", "常用", "正文；卡片模式下作为二级文本（≤112 字）"],
-            ["card_image", "卡片", "卡片主图：http(s) 链接，或容器内本地图片路径（自动上传换取 URL）"],
-            ["card_items", "卡片", "键值列表，每行一条「键=值」，最多 6 条（键 ≤5 字、值 ≤30 字）"],
+            ["content", "常用", "文本消息内容；「发送消息」按「消息类型」发送本框，「发送测试消息」会连同下框一起处理"],
+            ["card_content", "卡片", "卡片消息内容：每行一条「键=值」（最多 6 条）；非键值格式则整段作为卡片正文"],
+            ["card_image", "卡片", "卡片主图：http(s) 链接、内网地址或容器内本地路径（都会先换成企业微信可用 URL）"],
             ["card_source", "卡片", "卡片来源名称，例如「站点 1PTBA 消息」"],
             ["card_source_icon", "卡片", "来源图标 URL"],
             ["card_type", "卡片", "text_notice（默认，大图+键值列表）/ news_notice（图文展示型）"],
@@ -2021,7 +2184,7 @@ class _NotifyRunner(object):
             "        \"title\": \"新入库剧集：示例标题\",\n"
             "        \"card_source\": \"站点 1PTBA 消息\",\n"
             "        \"card_image\": \"https://example.com/cover.jpg\",\n"
-            "        \"card_items\": \"时间=2026-10-13 18:04\\n分类=日番\\n评分=8.5/10\",\n"
+            "        \"card_content\": \"时间=2026-10-13 18:04\\n分类=日番\\n评分=8.5/10\",\n"
             "        \"url\": \"https://example.com/detail\",\n"
             "    }},\n"
             "    timeout=(5, 30),\n"
