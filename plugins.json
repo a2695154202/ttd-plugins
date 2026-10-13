@@ -4,13 +4,13 @@
     {
       "id": "invites-signin",
       "name": "药丸论坛签到",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。执行结果通过 TgtoDrive 已配置的通知机器人推送（可用下拉框指定用哪一个），并在结果页提供运行日志窗口。定时执行请在「我的插件 → 定时执行」中配置 cron。",
       "author": "a2695154202",
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/invites-signin",
-      "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/invites-signin-v1.0.1/invites-signin.zip",
-      "sha256": "4954ead140eb957d2b5d97e332dc43ba01cefba06317528237e493f4036230bd",
+      "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/invites-signin-v1.0.2/invites-signin.zip",
+      "sha256": "70ed5a82af1b506b7d04a132bf1702bfceb885d067f859887d383d758b205c28",
       "size": 97208,
       "python_requires": ">=3.9",
       "requirements": [
@@ -28,8 +28,8 @@
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/wecom-notify",
       "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/wecom-notify-v1.0.0/wecom-notify.zip",
-      "sha256": "60d181b34d4320744f4f48c93b53c4121df838a73bb23895205f43cd540a467a",
-      "size": 119575,
+      "sha256": "698e0ff1e4db65be233e511046600edd71e2f9652efcfefd3a6d4da9dc5fb6b2",
+      "size": 119539,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"

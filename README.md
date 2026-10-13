@@ -14,7 +14,7 @@
 
 | 插件 | 版本 | 说明 | 文档 |
 | --- | --- | --- | --- |
-| **药丸论坛签到**<br>`invites-signin` | 1.0.1 | 药丸论坛（invites.fun，Flarum）自动签到。Cookie 优先换取新会话后签到，失败自动回退用户名密码登录；支持仅查询签到状态、查看本地签到历史；结果经 TgtoDrive 已配置的**主通知机器人**推送，也可**同时调用「企业微信通知」插件发送微信通知**（文本或带图卡片）；结果页内含运行日志窗口与「运行一次」按钮。 | [README](plugins/invites-signin/README.md) |
+| **药丸论坛签到**<br>`invites-signin` | 1.0.2 | 药丸论坛（invites.fun，Flarum）自动签到。Cookie 优先换取新会话后签到，失败自动回退用户名密码登录；支持仅查询签到状态、查看本地签到历史；结果经 TgtoDrive 已配置的**主通知机器人**推送，也可**同时调用「企业微信通知」插件发送微信通知**（文本或带图卡片）；结果页内含运行日志窗口与「运行一次」按钮。 | [README](plugins/invites-signin/README.md) |
 | **企业微信通知**<br>`wecom-notify` | 1.0.0 | 让 TgtoDrive 具备**企业微信（WeCom）应用消息推送**能力。填写企业 ID / 应用 AgentId / 应用 Secret 后，可用文本、markdown 或文本卡片发送给成员、部门、标签或全体可见成员；支持转发代理地址（应对「企业可信IP」限制）、超长消息自动分段、access_token 本地缓存与发送历史，内置**「发送测试消息」按钮**一键验证通知链路。 | [README](plugins/wecom-notify/README.md) |
 
 ---
@@ -111,9 +111,27 @@ python scripts/build_marketplace.py --repo <账号>/<仓库名>
 
 1. 在 `plugins/<id>/plugin.json` 中提升 `version`（保持 `id` 不变）。
 2. 在 `CHANGELOG.md` 中记录本次变更。
-3. 提交并推送。
-4. 在 Actions 页面手动触发 **Publish plugin** 工作流，选择要发布的插件 id。
+3. **运行仓库根目录的 `publish.bat`** —— 它会打包全部插件、刷新 `plugins.json`，然后提交并推送到 GitHub。
+4. 在 Actions 页面手动触发 **Publish plugin** 工作流，选择要发布的插件 id，为它创建/更新 Release。
 5. 工作流会打包、创建固定 tag 的 Release、上传附件，并刷新 `plugins.json` 中的 `download_url` / `sha256` / `size`。
+
+### 一键发布脚本
+
+| 命令 | 说明 |
+| --- | --- |
+| `publish.bat` | 打包全部插件 → 刷新 `plugins.json` → 提交 → 推送 |
+| `publish.bat -m "说明"` | 用自定义的提交说明 |
+| `publish.bat --no-push` | 只打包并提交到本地，不推送 |
+| `publish.bat --dry-run` | 只打印将要执行的命令，不做任何改动 |
+
+也可以直接用 `python scripts/publish_all.py` 加同样的参数。
+
+> ⚠️ **`publish.bat` 必须保持纯 ASCII 内容**：`cmd.exe` 是按系统 ANSI 代码页解析 `.bat` 文件的，
+> 即使写了 `chcp 65001` 也救不了解析阶段；写入 UTF-8 中文会导致整段语法错乱。
+> 因此脚本里的中文提示全部由 `scripts/publish_all.py` 输出。
+>
+> 打包是**确定性输出**，脚本对全部插件打包不会改变已发布插件的哈希，也不会影响其它插件的 Release；
+> 若工作区没有可提交的改动，脚本会自动跳过提交与推送。
 
 发布约束（由 TgtoDrive 插件市场校验）：
 

@@ -7,6 +7,10 @@
 *.txt   text eol=lf
 *.yml   text eol=lf
 *.yaml  text eol=lf
+
+# Windows 批处理必须以 CRLF 检出；且 publish.bat 保持纯 ASCII
+# （cmd.exe 按系统 ANSI 代码页解析 .bat，UTF-8 中文会破坏语法）
+*.bat   text eol=crlf
 *.toml  text eol=lf
 *.cfg   text eol=lf
 

@@ -162,28 +162,25 @@
     },
     {
       "name": "corp_id",
-      "label": "企业 ID",
+      "label": "企业 ID（必填）",
       "type": "text",
       "default": "",
-      "required": true,
       "placeholder": "ww 开头的一串字符",
       "help": "企业微信管理后台 →「我的企业 → 企业信息」中的企业 ID（corpid）。"
     },
     {
       "name": "agent_id",
-      "label": "应用 AgentId",
+      "label": "应用 AgentId（必填）",
       "type": "text",
       "default": "",
-      "required": true,
       "placeholder": "纯数字，例如 1000001",
       "help": "企业微信管理后台 →「应用管理 → 自建应用 → 应用详情」中的 AgentId，整数。"
     },
     {
       "name": "corp_secret",
-      "label": "应用 Secret",
+      "label": "应用 Secret（必填）",
       "type": "password",
       "default": "",
-      "required": true,
       "help": "自建应用详情页的 Secret。注意：插件设置以明文 JSON 保存于服务器插件目录，管理员可读取；更在意安全时可改用环境变量 TGTO_WECOM_CORP_SECRET，并把此项留空。Secret 不会出现在运行日志或返回值中。"
     },
     {
