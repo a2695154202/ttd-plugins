@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "id": "wecom-notify",
+  "name": "企业微信通知",
+  "version": "1.0.0",
+  "description": "让 TgtoDrive 具备企业微信（WeCom）应用消息推送能力。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可用文本、markdown 或文本卡片，把任意内容发送给指定成员、部门、标签或全体成员；支持转发代理地址（应对「企业可信IP」限制）、超长消息自动分段、access_token 本地缓存与发送历史。内置「发送测试消息」按钮一键验证通知链路，另有配置自检与可见范围成员查询。",
+  "author": "a2695154202",
+  "entry": "plugin.py",
+  "timeout": 120,
+  "inputs": [
+    {
+      "name": "func",
+      "label": "执行功能",
+      "type": "select",
+      "default": "send",
+      "options": [
+        {"label": "发送消息（按下方内容）", "value": "send"},
+        {"label": "发送测试消息（固定测试文本）", "value": "test"},
+        {"label": "检查配置（获取 access_token）", "value": "config"},
+        {"label": "查询应用可见范围成员", "value": "users"},
+        {"label": "查看发送历史（本地记录）", "value": "history"}
+      ],
+      "help": "顶部右侧的「发送消息」「发送测试消息」按钮会以对应功能立即执行一次。"
+    },
+    {
+      "name": "msgtype",
+      "label": "消息类型",
+      "type": "select",
+      "default": "text",
+      "options": [
+        {"label": "文本 text", "value": "text"},
+        {"label": "markdown（推荐，排版更好看）", "value": "markdown"},
+        {"label": "文本卡片 textcard（带标题与跳转按钮）", "value": "textcard"}
+      ],
+      "help": "text 与 markdown 正文上限 2048 字节（约 680 个汉字），超出会按「超长消息自动分段」处理；textcard 需要同时填「卡片标题」。"
+    },
+    {
+      "name": "touser",
+      "label": "接收成员（UserID）",
+      "type": "text",
+      "default": "@all",
+      "placeholder": "@all 或 zhangsan|lisi",
+      "help": "多个成员用 | 分隔，最多 1000 个；填 @all 表示发送给该应用的全体可见成员（此时忽略部门与标签）。可在「查询应用可见范围成员」里查到 UserID。"
+    },
+    {
+      "name": "toparty",
+      "label": "接收部门（部门 ID）",
+      "type": "text",
+      "default": "",
+      "placeholder": "1|2",
+      "help": "多个部门用 | 分隔，最多 100 个。touser 为 @all 时本项被忽略。"
+    },
+    {
+      "name": "totag",
+      "label": "接收标签（标签 ID）",
+      "type": "text",
+      "default": "",
+      "placeholder": "1|2",
+      "help": "多个标签用 | 分隔，最多 100 个。touser 为 @all 时本项被忽略。"
+    },
+    {
+      "name": "safe",
+      "label": "保密消息（不可分享、带水印）",
+      "type": "boolean",
+      "default": false,
+      "help": "对应接口的 safe 参数：0 可对外分享，1 不可分享且内容显示水印。"
+    },
+    {
+      "name": "title",
+      "label": "卡片标题",
+      "type": "text",
+      "default": "",
+      "placeholder": "仅文本卡片消息需要",
+      "help": "消息类型选择 textcard 时必填，128 字节以内。"
+    },
+    {
+      "name": "url",
+      "label": "卡片跳转链接",
+      "type": "text",
+      "default": "",
+      "placeholder": "https://example.com/detail（仅文本卡片消息）",
+      "help": "消息类型选择 textcard 时的点击跳转地址，需带 http/https 协议头。"
+    },
+    {
+      "name": "content",
+      "label": "消息内容",
+      "type": "textarea",
+      "default": "",
+      "placeholder": "要推送的正文。markdown 类型支持 # 标题、**加粗**、> 引用、`代码`、<font color=\"info\">彩色</font>、[链接](url) 等子集语法。",
+      "help": "发送测试消息时本项被忽略。文本消息可用 \\n 换行，也支持 <a href=\"...\">文字</a> 链接。"
+    },
+    {
+      "name": "channel_name",
+      "label": "通知渠道名称",
+      "type": "text",
+      "default": "企业微信",
+      "placeholder": "WX",
+      "help": "仅用于界面显示与通知标题前缀，可随意填写；与 TgtoDrive 的通知渠道名保持一致的写法即可。"
+    },
+    {
+      "name": "corp_id",
+      "label": "企业 ID",
+      "type": "text",
+      "default": "",
+      "required": true,
+      "placeholder": "ww 开头的一串字符",
+      "help": "企业微信管理后台 →「我的企业 → 企业信息」中的企业 ID（corpid）。"
+    },
+    {
+      "name": "agent_id",
+      "label": "应用 AgentId",
+      "type": "text",
+      "default": "",
+      "required": true,
+      "placeholder": "纯数字，例如 1000001",
+      "help": "企业微信管理后台 →「应用管理 → 自建应用 → 应用详情」中的 AgentId，整数。"
+    },
+    {
+      "name": "corp_secret",
+      "label": "应用 Secret",
+      "type": "password",
+      "default": "",
+      "required": true,
+      "help": "自建应用详情页的 Secret。注意：插件设置以明文 JSON 保存于服务器插件目录，管理员可读取；更在意安全时可改用环境变量 TGTO_WECOM_CORP_SECRET，并把此项留空。Secret 不会出现在运行日志或返回值中。"
+    },
+    {
+      "name": "api_base",
+      "label": "代理地址",
+      "type": "text",
+      "default": "https://qyapi.weixin.qq.com",
+      "placeholder": "https://qyapi.weixin.qq.com",
+      "help": "接口基础地址。2022 年 6 月 28 日后新建的自建应用必须配置「企业可信IP」才能调用接口（否则报 60020）；若服务器出口 IP 不固定，可在此填写转发代理地址（如 https://wx.example.com），请求会发往「代理地址 + /cgi-bin/...」。不使用代理时保留默认值。"
+    },
+    {
+      "name": "token",
+      "label": "回调 Token",
+      "type": "text",
+      "default": "",
+      "help": "自建应用「接收消息 → API 接收消息」配置中的 Token。用于校验收到的回调请求；本插件是一次性执行、无常驻监听，因此该项仅做配置留档与格式校验，不参与消息收发。"
+    },
+    {
+      "name": "encoding_aes_key",
+      "label": "EncodingAESKey",
+      "type": "password",
+      "default": "",
+      "help": "同上，接收消息配置中的 EncodingAESKey（43 位 Base64 字符）。填写后会做长度与字符集校验，格式不对会在日志中提示。"
+    },
+    {
+      "name": "admin_users",
+      "label": "管理员白名单",
+      "type": "textarea",
+      "default": "",
+      "placeholder": "CaiShenYeDeXinTouBao|zhangsan",
+      "help": "可使用管理菜单及命令的用户 ID 列表，多个用换行、逗号或 | 分隔。当「接收成员 / 部门 / 标签」都为空时，插件会把消息发送给这里的成员作为兜底收件人。"
+    },
+    {
+      "name": "split_long",
+      "label": "超长消息自动分段",
+      "type": "boolean",
+      "default": true,
+      "help": "开启后，超过 2048 字节的正文会按段落边界切成多条依次发送，并标注序号；关闭则只发送截断后的内容并在日志中提示。"
+    },
+    {
+      "name": "history_days",
+      "label": "历史记录保留天数",
+      "type": "number",
+      "default": 30,
+      "min": 1,
+      "max": 3650,
+      "step": 1,
+      "help": "发送历史保存在插件数据目录，超出天数的记录会被清理。"
+    },
+    {
+      "name": "tgto_base_url",
+      "label": "TgtoDrive 地址（可选）",
+      "type": "text",
+      "default": "",
+      "placeholder": "http://127.0.0.1:12366",
+      "help": "仅当上面的「企业 ID / 应用 Secret」留空时使用：插件会尝试从 TgtoDrive 已保存的项目设置里读取微信渠道配置作为兜底。留空则读取环境变量 TGTO_OPENAPI_BASE_URL。"
+    },
+    {
+      "name": "tgto_token",
+      "label": "OpenAPI 令牌（可选）",
+      "type": "password",
+      "default": "",
+      "help": "配合上一项使用，留空则读取环境变量 TGTO_OPENAPI_TOKEN。仅用于读取项目设置，不会出现在日志或返回值中。"
+    }
+  ],
+  "ui": {
+    "width": "wide",
+    "layout": "stack",
+    "components": [
+      {"type": "heading", "text": "企业微信通知"},
+      {"type": "alert", "text": "在企业微信管理后台创建自建应用，把「企业 ID / 应用 AgentId / 应用 Secret」填入「应用配置」页签，然后点右上角「发送测试消息」验证通知链路。若返回 60020（IP 不在可信名单）：把服务器出口 IP 加入应用的「企业可信IP」，或在「应用配置 → 代理地址」填写转发代理地址。", "style": {"tone": "warning"}},
+      {"type": "grid", "columns": 4, "children": [
+        {"type": "tabs", "style": {"span": 3}, "children": [
+          {"type": "card", "label": "发送消息", "children": [
+            {"type": "field", "name": "func"},
+            {"type": "field", "name": "msgtype"},
+            {"type": "field", "name": "touser"},
+            {"type": "field", "name": "toparty"},
+            {"type": "field", "name": "totag"},
+            {"type": "field", "name": "safe"},
+            {"type": "field", "name": "title"},
+            {"type": "field", "name": "url"},
+            {"type": "field", "name": "content"}
+          ]},
+          {"type": "card", "label": "应用配置", "children": [
+            {"type": "field", "name": "channel_name"},
+            {"type": "field", "name": "corp_id"},
+            {"type": "field", "name": "agent_id"},
+            {"type": "field", "name": "corp_secret"},
+            {"type": "field", "name": "api_base"},
+            {"type": "divider"},
+            {"type": "button", "label": "检查配置", "action": "run", "params": {"func": "config"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
+          ]},
+          {"type": "card", "label": "回调与高级", "children": [
+            {"type": "field", "name": "token"},
+            {"type": "field", "name": "encoding_aes_key"},
+            {"type": "field", "name": "admin_users"},
+            {"type": "divider"},
+            {"type": "field", "name": "split_long"},
+            {"type": "field", "name": "history_days"},
+            {"type": "field", "name": "tgto_base_url"},
+            {"type": "field", "name": "tgto_token"}
+          ]}
+        ]},
+        {"type": "group", "style": {"span": 1}, "children": [
+          {"type": "button", "label": "发送消息", "action": "run", "params": {"func": "send"}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
+          {"type": "button", "label": "发送测试消息", "action": "run", "params": {"func": "test"}, "style": {"tone": "success", "size": "large", "variant": "soft"}}
+        ]}
+      ]},
+      {"type": "divider"},
+      {"type": "text", "text": "「发送消息」按当前表单内容发送；「发送测试消息」用固定测试文本验证配置，忽略「消息内容」。另有「检查配置」在「应用配置」页签内，「查询可见范围成员」与「查看发送历史」在「执行功能」下拉框中。", "style": {"tone": "muted"}}
+    ]
+  }
+}
