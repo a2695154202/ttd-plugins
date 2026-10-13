@@ -94,7 +94,7 @@ def notify_via_wecom(content, title="TgtoDrive 通知"):
 | `card_source` | string | 卡片来源名称，例如「站点 1PTBA 消息」 |
 | `card_source_icon` | string | 来源图标 URL |
 | `card_sub_title` | string | 卡片副标题（≤30 字） |
-| `card_content` | string | 卡片消息内容：每行一条 `键=值`（最多 6 条）显示为键值列表；整段不是键值格式时作为卡片正文（≤112 字）。兼容旧字段名 `card_items` |
+| `card_content` | string | 卡片消息内容。**优先识别企业微信原生 JSON**：含 `template_card` 或 `card_type` 时原样放进请求体（不解析、不截断）；否则按每行一条 `键=值`（最多 6 条）生成键值列表，整段不是键值格式时作为卡片正文（≤112 字）。兼容旧字段名 `card_items` |
 | `card_aspect_ratio` | number | 图片比例 1.3–2.25，默认 2.25 |
 | `split_long` | bool | 超长正文是否自动分段，默认 `true` |
 | `channel_name` / `corp_id` / `agent_id` / `corp_secret` / `api_base` / `token` / `encoding_aes_key` / `admin_users` / `history_days` / `tgto_base_url` / `tgto_token` | — | 配置类字段，**一般不必传**，沿用用户已保存的设置 |

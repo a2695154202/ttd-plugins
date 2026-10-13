@@ -4,13 +4,13 @@
     {
       "id": "invites-signin",
       "name": "药丸论坛签到",
-      "version": "1.0.4",
+      "version": "1.0.2",
       "description": "药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。执行结果通过 TgtoDrive 已配置的通知机器人推送（可用下拉框指定用哪一个），并在结果页提供运行日志窗口。定时执行请在「我的插件 → 定时执行」中配置 cron。",
       "author": "a2695154202",
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/invites-signin",
-      "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/invites-signin-v1.0.4/invites-signin.zip",
-      "sha256": "d8a5ab96cb700c4213e403f77bb87f79108a96d0eb4948b3817e96fc555c4d8f",
+      "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/invites-signin-v1.0.2/invites-signin.zip",
+      "sha256": "2fc4a6df39bcacb1217ea5e1d67b93313bc53fdedb82a661968b8ca327e01dd4",
       "size": 102330,
       "python_requires": ">=3.9",
       "requirements": [
@@ -22,14 +22,14 @@
     {
       "id": "wecom-notify",
       "name": "企业微信通知",
-      "version": "1.0.1",
+      "version": "1.0.0",
       "description": "让 TgtoDrive 具备企业微信（WeCom）应用消息推送能力，并且可以被其他插件调用。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可用文本、markdown、文本卡片或带图卡片通知，把任意内容发送给指定成员、部门、标签或全体成员；支持转发代理地址（应对「企业可信IP」限制）、超长消息自动分段、access_token 本地缓存与发送历史。内置「发送测试消息」按钮一键验证通知链路，「查看调用方法」按钮给出被其他插件调用的完整参数说明与示例代码。",
       "author": "a2695154202",
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/wecom-notify",
-      "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/wecom-notify-v1.0.1/wecom-notify.zip",
-      "sha256": "bc8d2a2995a0166233a6a759c399c91322745f0ae37d82889ac679d34a013104",
-      "size": 128503,
+      "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/wecom-notify-v1.0.0/wecom-notify.zip",
+      "sha256": "f434857c830245f4ad22ed1eea3b26b8af2bb1a059da56b000abb47dbd860340",
+      "size": 131049,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"

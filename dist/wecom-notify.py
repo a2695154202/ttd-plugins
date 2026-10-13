@@ -6,7 +6,7 @@ PLUGIN_MANIFEST = {
   'schema_version': 1,
   'id': 'wecom-notify',
   'name': '企业微信通知',
-  'version': '1.0.1',
+  'version': '1.0.0',
   'description': '让 TgtoDrive 具备企业微信（WeCom）应用消息推送能力，并且可以被其他插件调用。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可用文本、markdown、文本卡片或带图卡片通知，把任意内容发送给指定成员、部门、标签或全体成员；支持转发代理地址（应对「企业可信IP」限制）、超长消息自动分段、access_token 本地缓存与发送历史。内置「发送测试消息」按钮一键验证通知链路，「查看调用方法」按钮给出被其他插件调用的完整参数说明与示例代码。',
   'author': 'a2695154202',
   'entry': 'plugin.py',
@@ -179,8 +179,8 @@ PLUGIN_MANIFEST = {
       'label': '卡片消息内容',
       'type': 'textarea',
       'default': '状态=测试成功\n类型=卡片通知\n说明=收到这张卡片说明通知链路已经打通\n提示=可在「卡片通知」页签调整卡片参数',
-      'placeholder': '每行一条「键=值」，最多 6 条，显示为卡片的键值列表；\n若整段都不是键值格式，则整段作为卡片的二级文本显示。',
-      'help': '支持多行。每行一条「键=值」（= : ： | 均可分隔），最多 6 条；整段没有键值格式时，会作为卡片的二级文本（≤112 字）。企业微信限制键 ≤5 字、值 ≤30 字，超出时插件会主动截断并在日志中说明。',
+      'placeholder': '两种写法任选：\n1) 直接粘贴企业微信原生 JSON（完整请求体，或只含 card_type 的卡片内容）；\n2) 每行一条「键=值」（最多 6 条），生成卡片的键值列表。',
+      'help': '两种写法任选：\n①【推荐】直接粘贴企业微信原生 JSON —— 可以是完整请求体（含 msgtype 与 template_card），也可以只是卡片本身（含 card_type）。此时内容会**原样**放进请求，不做键值解析、不截断，卡片参数以 JSON 为准（官方文档里的示例可直接粘贴）。\n② 键值列表：每行一条「键=值」（= : ： | 均可分隔），最多 6 条；整段没有键值格式时作为卡片的二级文本（≤112 字）。企业微信限制键 ≤5 字、值 ≤30 字，超出时插件会主动截断并在日志中说明。',
     },
     {
       'name': 'card_aspect_ratio',
@@ -996,6 +996,33 @@ def _clip(text, limit):
     if len(value) <= limit:
         return value, False
     return value[:limit], True
+
+
+def _parse_native_card_json(text):
+    """尝试把「卡片消息内容」当作企业微信**原生 JSON** 解析。
+
+    支持两种写法，便于从官方文档直接粘贴，不必改写成「键=值」：
+
+    * 完整请求体：``{"msgtype": "template_card", "template_card": {...}}``
+    * 仅卡片本身：``{"card_type": "text_notice", ...}``
+
+    返回 ``(kind, obj)``：``kind`` 为 ``"body"``（完整请求体）或 ``"card"``（卡片内容）；
+    当内容不是以 ``{`` 开头的 JSON 对象时返回 ``(None, None)``，交回「键=值」解析。
+    """
+    text = str(text or "").strip()
+    if not text.startswith("{"):
+        return None, None
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return None, None
+    if not isinstance(obj, dict):
+        return None, None
+    if isinstance(obj.get("template_card"), dict):
+        return "body", obj
+    if "card_type" in obj:
+        return "card", obj
+    return None, None
 
 
 def _parse_card_items(text, limit=CARD_ITEMS_MAX):
@@ -1951,7 +1978,21 @@ class _NotifyRunner(object):
                 "btntxt": "查看详情",
             }
         elif self.msgtype == "template_card":
-            payload["template_card"] = self.build_template_card(content)
+            kind, native = _parse_native_card_json(self.card_content)
+            if kind == "card":
+                self.log.info("「卡片消息内容」识别为企业微信原生 template_card JSON，直接使用"
+                              "（不再按「键=值」解析）")
+                payload["template_card"] = native
+            elif kind == "body":
+                self.log.info("「卡片消息内容」识别为完整的企业微信请求体 JSON，直接使用")
+                merged = dict(native)
+                merged.setdefault("msgtype", "template_card")
+                for key in ("touser", "toparty", "totag", "agentid"):
+                    if key in payload:
+                        merged.setdefault(key, payload[key])
+                payload = merged
+            else:
+                payload["template_card"] = self.build_template_card(content)
         else:
             raise ValueError("不支持的「消息类型」：%s" % self.msgtype)
 
@@ -2318,7 +2359,7 @@ class _NotifyRunner(object):
             ["toparty / totag", "可选", "部门 ID / 标签 ID，touser 为 @all 时被忽略"],
             ["title", "卡片", "卡片标题（template_card 与 textcard 使用）"],
             ["content", "常用", "文本消息内容；「发送消息」按「消息类型」发送本框，「发送测试消息」会连同下框一起处理"],
-            ["card_content", "卡片", "卡片消息内容：每行一条「键=值」（最多 6 条）；非键值格式则整段作为卡片正文"],
+            ["card_content", "卡片", "卡片消息内容：可直接粘贴企业微信原生 JSON（原样发送）；否则每行一条「键=值」生成键值列表"],
             ["card_image", "卡片", "卡片主图：http(s) 链接、内网地址或容器内本地路径（都会先换成企业微信可用 URL）"],
             ["card_source", "卡片", "卡片来源名称，例如「站点 1PTBA 消息」"],
             ["card_source_icon", "卡片", "来源图标 URL"],

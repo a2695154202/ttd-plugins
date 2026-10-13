@@ -434,6 +434,33 @@ def _clip(text, limit):
     return value[:limit], True
 
 
+def _parse_native_card_json(text):
+    """尝试把「卡片消息内容」当作企业微信**原生 JSON** 解析。
+
+    支持两种写法，便于从官方文档直接粘贴，不必改写成「键=值」：
+
+    * 完整请求体：``{"msgtype": "template_card", "template_card": {...}}``
+    * 仅卡片本身：``{"card_type": "text_notice", ...}``
+
+    返回 ``(kind, obj)``：``kind`` 为 ``"body"``（完整请求体）或 ``"card"``（卡片内容）；
+    当内容不是以 ``{`` 开头的 JSON 对象时返回 ``(None, None)``，交回「键=值」解析。
+    """
+    text = str(text or "").strip()
+    if not text.startswith("{"):
+        return None, None
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return None, None
+    if not isinstance(obj, dict):
+        return None, None
+    if isinstance(obj.get("template_card"), dict):
+        return "body", obj
+    if "card_type" in obj:
+        return "card", obj
+    return None, None
+
+
 def _parse_card_items(text, limit=CARD_ITEMS_MAX):
     """把多行「键=值」文本解析成模板卡片的 horizontal_content_list。
 
@@ -1387,7 +1414,21 @@ class _NotifyRunner(object):
                 "btntxt": "查看详情",
             }
         elif self.msgtype == "template_card":
-            payload["template_card"] = self.build_template_card(content)
+            kind, native = _parse_native_card_json(self.card_content)
+            if kind == "card":
+                self.log.info("「卡片消息内容」识别为企业微信原生 template_card JSON，直接使用"
+                              "（不再按「键=值」解析）")
+                payload["template_card"] = native
+            elif kind == "body":
+                self.log.info("「卡片消息内容」识别为完整的企业微信请求体 JSON，直接使用")
+                merged = dict(native)
+                merged.setdefault("msgtype", "template_card")
+                for key in ("touser", "toparty", "totag", "agentid"):
+                    if key in payload:
+                        merged.setdefault(key, payload[key])
+                payload = merged
+            else:
+                payload["template_card"] = self.build_template_card(content)
         else:
             raise ValueError("不支持的「消息类型」：%s" % self.msgtype)
 
@@ -1754,7 +1795,7 @@ class _NotifyRunner(object):
             ["toparty / totag", "可选", "部门 ID / 标签 ID，touser 为 @all 时被忽略"],
             ["title", "卡片", "卡片标题（template_card 与 textcard 使用）"],
             ["content", "常用", "文本消息内容；「发送消息」按「消息类型」发送本框，「发送测试消息」会连同下框一起处理"],
-            ["card_content", "卡片", "卡片消息内容：每行一条「键=值」（最多 6 条）；非键值格式则整段作为卡片正文"],
+            ["card_content", "卡片", "卡片消息内容：可直接粘贴企业微信原生 JSON（原样发送）；否则每行一条「键=值」生成键值列表"],
             ["card_image", "卡片", "卡片主图：http(s) 链接、内网地址或容器内本地路径（都会先换成企业微信可用 URL）"],
             ["card_source", "卡片", "卡片来源名称，例如「站点 1PTBA 消息」"],
             ["card_source_icon", "卡片", "来源图标 URL"],

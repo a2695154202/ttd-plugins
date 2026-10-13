@@ -3,7 +3,7 @@
 移植改写自 [thsrite/MoviePilot-Plugins](https://github.com/thsrite/MoviePilot-Plugins) 中的「药丸签到」插件（v3.0.1，原作者 [@thsrite](https://github.com/thsrite)），由 **a2695154202** 按 TgtoDrive Python 插件协议改写。
 
 - **插件 id**：`invites-signin`
-- **版本**：`1.0.4`
+- **版本**：`1.0.2`
 - **作者**：`a2695154202`
 - **入口**：`plugin.py`
 - **超时**：300 秒
