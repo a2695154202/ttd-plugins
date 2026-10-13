@@ -67,7 +67,10 @@
 │       └── marketplace.json       # 可选：市场元数据
 ├── scripts/
 │   ├── package_plugin.py          # 打包插件并计算 sha256 / size
-│   └── build_marketplace.py       # 扫描 plugins/ 生成 plugins.json
+│   ├── build_marketplace.py       # 扫描 plugins/ 生成 plugins.json
+│   ├── publish_all.py             # 一键发布：打包 → 提交 → 推送 → 发布 → 校验
+│   └── gh_publish.py              # 触发 Publish plugin 并逐字节校验 Release 附件
+├── publish.bat                    # 双击即发布（Windows，调用 scripts/publish_all.py）
 ├── dist/                          # 单文件版产物（可直接导入；zip 不入库，随 Release 分发）
 │   ├── invites-signin.py
 │   └── wecom-notify.py
@@ -111,27 +114,46 @@ python scripts/build_marketplace.py --repo <账号>/<仓库名>
 
 1. 在 `plugins/<id>/plugin.json` 中提升 `version`（保持 `id` 不变）。
 2. 在 `CHANGELOG.md` 中记录本次变更。
-3. **运行仓库根目录的 `publish.bat`** —— 它会打包全部插件、刷新 `plugins.json`，然后提交并推送到 GitHub。
-4. 在 Actions 页面手动触发 **Publish plugin** 工作流，选择要发布的插件 id，为它创建/更新 Release。
-5. 工作流会打包、创建固定 tag 的 Release、上传附件，并刷新 `plugins.json` 中的 `download_url` / `sha256` / `size`。
+3. **运行仓库根目录的 `publish.bat`** —— 它会跑完整条发布链路，无需再手工去 Actions 点工作流。
 
 ### 一键发布脚本
 
+`publish.bat` 依次执行 5 步：打包全部插件 → 刷新 `plugins.json` → 提交 → 推送 →
+**触发 `Publish plugin` 工作流并逐字节校验 Release 附件**。
+
 | 命令 | 说明 |
 | --- | --- |
-| `publish.bat` | 打包全部插件 → 刷新 `plugins.json` → 提交 → 推送 |
+| `publish.bat` | 完整链路（推荐） |
 | `publish.bat -m "说明"` | 用自定义的提交说明 |
+| `publish.bat --no-publish` | 只到推送为止，不触发 Release |
+| `publish.bat --publish-only` | 跳过打包与提交，只做发布与校验（补发上次漏掉的 Release） |
 | `publish.bat --no-push` | 只打包并提交到本地，不推送 |
 | `publish.bat --dry-run` | 只打印将要执行的命令，不做任何改动 |
 
-也可以直接用 `python scripts/publish_all.py` 加同样的参数。
+也可以直接运行 `python scripts/publish_all.py`（参数相同），或只跑发布环节：
+`python scripts/gh_publish.py`（加 `--verify-only` 可只校验不发布）。
+
+#### 为什么「推送」不等于「发布」
+
+插件市场是拿 `plugins.json` 里声明的 `download_url` 去 GitHub Release 下载附件的。
+**推送代码不会创建 Release**，只要少了这一步，市场安装就会失败：
+
+| 情况 | 市场报错 |
+| --- | --- |
+| tag 对应的 Release 还不存在 | `GitHub 下载失败（HTTP 404）；Release API 回退失败：GitHub 下载失败（HTTP 404）` |
+| Release 存在，但附件与目录声明的 `sha256` / `size` 不符（例如改了源码没重新发布） | `GitHub 文件超过允许大小或长度无效` |
+
+`gh_publish.py` 会在发布后**重新下载附件逐字节复核**，与 `plugins.json` 的声明比对；
+不一致会以非零退出码结束，不会出现"以为发布成功、实际装不上"的静默失败。
 
 > ⚠️ **`publish.bat` 必须保持纯 ASCII 内容**：`cmd.exe` 是按系统 ANSI 代码页解析 `.bat` 文件的，
 > 即使写了 `chcp 65001` 也救不了解析阶段；写入 UTF-8 中文会导致整段语法错乱。
 > 因此脚本里的中文提示全部由 `scripts/publish_all.py` 输出。
 >
-> 打包是**确定性输出**，脚本对全部插件打包不会改变已发布插件的哈希，也不会影响其它插件的 Release；
-> 若工作区没有可提交的改动，脚本会自动跳过提交与推送。
+> 打包是**确定性输出**（zip 用 STORED、固定时间戳、按 POSIX 路径排序），
+> 脚本对全部插件打包不会改变已发布插件的哈希，也不会影响其它插件的 Release，
+> 更不会让发布工作流产生多余提交；若工作区没有可提交的改动，脚本会跳过提交与推送，
+> 但仍会继续做发布与校验。
 
 发布约束（由 TgtoDrive 插件市场校验）：
 

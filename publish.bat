@@ -6,7 +6,10 @@ cd /d "%~dp0"
 echo.
 echo ============================================================
 echo   TgtoDrive Plugins - Publish All
-echo   package plugins / refresh plugins.json / commit + push
+echo   1. package all plugins
+echo   2. refresh plugins.json
+echo   3. commit + push
+echo   4. publish GitHub Releases and verify byte-for-byte
 echo ============================================================
 echo.
 
@@ -40,8 +43,13 @@ if errorlevel 1 (
 )
 
 rem ------------------------------------------------------------
-rem  3. run the publish script (arguments are passed through,
-rem     e.g.  publish.bat -m "message"  /  publish.bat --no-push)
+rem  3. run the publish script. Arguments are passed through:
+rem       publish.bat -m "message"      custom commit message
+rem       publish.bat --no-publish      skip release publishing
+rem       publish.bat --no-push         commit locally only
+rem       publish.bat --publish-only    only publish + verify
+rem                                     (repairs a forgotten release)
+rem       publish.bat --dry-run         print commands only
 rem ------------------------------------------------------------
 %PYTHON_EXE% "scripts\publish_all.py" %*
 if errorlevel 1 goto :failed
