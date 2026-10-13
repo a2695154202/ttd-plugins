@@ -52,23 +52,23 @@ PLUGIN_MANIFEST = {
       'default': 'text',
       'options': [
         {
-          'label': '文本 text',
+          'label': '文本 text（微信可收）',
           'value': 'text',
         },
         {
-          'label': 'markdown（推荐，排版更好看）',
+          'label': 'markdown（微信可收，排版更好看）',
           'value': 'markdown',
         },
         {
-          'label': '文本卡片 textcard（带标题与跳转按钮）',
+          'label': '文本卡片 textcard（微信可收，带标题与跳转按钮）',
           'value': 'textcard',
         },
         {
-          'label': '卡片通知 template_card（带图 + 键值列表）',
+          'label': '卡片通知 template_card（仅企业微信可收，微信收不到）',
           'value': 'template_card',
         },
       ],
-      'help': 'text 与 markdown 正文上限 2048 字节（约 680 个汉字），超出会按「超长消息自动分段」处理；textcard 需要同时填「卡片标题」；选「卡片通知」时请到「卡片通知」页签填写卡片参数。',
+      'help': 'text 与 markdown 正文上限 2048 字节（约 680 个汉字），超出会按「超长消息自动分段」处理；textcard 需要同时填「卡片标题」；选「卡片通知」时请到「卡片通知」页签填写卡片参数。\n\n⚠ 微信接收范围：企业微信官方明确「微信插件不支持接收模板卡片消息」—— 文本 / markdown / 文本卡片都可以在微信收到，而「卡片通知」（template_card）**只会在企业微信客户端出现，微信里一定收不到**，这与收件人权限无关。需要微信也能收到时，请选用前三种类型。',
     },
     {
       'name': 'touser',
@@ -1763,6 +1763,8 @@ class _NotifyRunner(object):
         # 投递校验结果（收件人是否真的在应用可见范围内）
         self._delivery_status = ""
         self._delivery_note = ""
+        self._recipients = None
+        self._invalid_users = []
 
         self.touser = _s(self.params, "touser")
         self.toparty = _s(self.params, "toparty")
@@ -1850,7 +1852,13 @@ class _NotifyRunner(object):
     # -- 收件人 ------------------------------------------------------------
 
     def resolve_recipients(self):
-        """确定收件人；三项都为空时回退到「管理员白名单」。"""
+        """确定收件人；三项都为空时回退到「管理员白名单」。
+
+        结果会缓存：本方法在一次执行里会被调用多次（构造请求体、生成结果文案、
+        投递校验），不缓存会把同一行日志重复打印好几遍。
+        """
+        if self._recipients is not None:
+            return self._recipients
         touser = self.touser or "@all"
         if not self.touser and not self.toparty and not self.totag:
             admins = _split_ids(self.admin_users)
@@ -1863,7 +1871,8 @@ class _NotifyRunner(object):
                 self.log.info("未填写任何收件人，默认发送给应用全体可见成员（@all）")
         self.log.info("接收人：成员 %s｜部门 %s｜标签 %s"
                       % (touser or "（无）", self.toparty or "（无）", self.totag or "（无）"))
-        return touser, self.toparty, self.totag
+        self._recipients = (touser, self.toparty, self.totag)
+        return self._recipients
 
     # -- 各功能 ------------------------------------------------------------
 
@@ -2107,6 +2116,14 @@ class _NotifyRunner(object):
             self.log.info("第 %d/%d 段发送成功，msgid=%s%s"
                           % (index, total, msgid or "-",
                              "，无效接收者：%s" % invalid if invalid else ""))
+            if invalid:
+                # 企业微信对「不存在 / 不在可见范围」的收件人不报错，只把它列进
+                # invaliduser —— 这是自建转发地址下唯一可用的投递校验。
+                for uid in _split_ids(invalid):
+                    if uid and uid not in self._invalid_users:
+                        self._invalid_users.append(uid)
+                self.log.warn("⚠ 企业微信报告以下收件人无效（不在应用可见范围或不存在），"
+                              "消息不会送达：%s" % invalid)
             records.append(msgid)
             self._record("sent", msgid, "", invalid=invalid)
 
@@ -2149,7 +2166,10 @@ class _NotifyRunner(object):
         if self._delivery_status == "ok":
             self.log.info("投递校验：%s" % self._delivery_note)
         elif self._delivery_status == "unknown":
-            self.log.warn("投递校验未完成（不影响本次发送）：%s" % self._delivery_note)
+            # 自建转发地址通常只代理 gettoken / message/send，user/list 会 404，
+            # 这属于正常降级，不是问题；真正有效的兜底是 message/send 返回的 invaliduser。
+            self.log.info("投递校验跳过（该接口在自建转发地址上通常不可用）：%s"
+                          % self._delivery_note)
         else:
             self.log.warn("⚠ 投递校验：%s" % self._delivery_note)
 
@@ -2564,8 +2584,29 @@ class _NotifyRunner(object):
                 "style": {"tone": "warning"},
             })
 
-        # 自建应用的消息只到「企业微信」客户端；个人微信需要关注「微信插件」才能收到
-        if status == "ok":
+        # 企业微信在返回里列出的无效收件人（自建转发地址下唯一可用的投递校验）
+        if self._invalid_users:
+            components.append({
+                "type": "alert",
+                "text": ("企业微信报告以下收件人无效（不在应用可见范围或不存在），"
+                         "消息不会送达：%s。请到管理后台该应用的「可见范围」里加入他们。"
+                         % "、".join(self._invalid_users[:8])),
+                "style": {"tone": "danger"},
+            })
+
+        if self.msgtype == "template_card":
+            # 企业微信官方技术支持明确答复：「微信插件不支持接收模板卡片消息」，
+            # 因此模板卡片只会在企业微信客户端出现，与收件人权限无关。
+            components.append({
+                "type": "alert",
+                "text": ("注意：企业微信官方明确「**微信插件不支持接收模板卡片消息**」—— "
+                         "本条只会在「企业微信」客户端出现，微信里一定收不到。"
+                         "要在微信收到，请把「消息类型」改成 文本 / markdown / 文本卡片，"
+                         "或把卡片结构换成 textcard。"),
+                "style": {"tone": "warning"},
+            })
+        elif status == "ok":
+            # 自建应用的消息只到「企业微信」客户端；个人微信需要关注「微信插件」才能收到
             components.append({
                 "type": "text",
                 "text": ("消息已投递到「**企业微信**」客户端。**个人微信不会收到自建应用消息** —— "

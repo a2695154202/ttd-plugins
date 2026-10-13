@@ -29,12 +29,12 @@
       "type": "select",
       "default": "text",
       "options": [
-        {"label": "文本 text", "value": "text"},
-        {"label": "markdown（推荐，排版更好看）", "value": "markdown"},
-        {"label": "文本卡片 textcard（带标题与跳转按钮）", "value": "textcard"},
-        {"label": "卡片通知 template_card（带图 + 键值列表）", "value": "template_card"}
+        {"label": "文本 text（微信可收）", "value": "text"},
+        {"label": "markdown（微信可收，排版更好看）", "value": "markdown"},
+        {"label": "文本卡片 textcard（微信可收，带标题与跳转按钮）", "value": "textcard"},
+        {"label": "卡片通知 template_card（仅企业微信可收，微信收不到）", "value": "template_card"}
       ],
-      "help": "text 与 markdown 正文上限 2048 字节（约 680 个汉字），超出会按「超长消息自动分段」处理；textcard 需要同时填「卡片标题」；选「卡片通知」时请到「卡片通知」页签填写卡片参数。"
+      "help": "text 与 markdown 正文上限 2048 字节（约 680 个汉字），超出会按「超长消息自动分段」处理；textcard 需要同时填「卡片标题」；选「卡片通知」时请到「卡片通知」页签填写卡片参数。\n\n⚠ 微信接收范围：企业微信官方明确「微信插件不支持接收模板卡片消息」—— 文本 / markdown / 文本卡片都可以在微信收到，而「卡片通知」（template_card）**只会在企业微信客户端出现，微信里一定收不到**，这与收件人权限无关。需要微信也能收到时，请选用前三种类型。"
     },
     {
       "name": "touser",
