@@ -207,144 +207,139 @@ PLUGIN_MANIFEST = {
         },
       },
       {
-        'type': 'tabs',
+        'type': 'grid',
+        'columns': 4,
         'children': [
           {
-            'type': 'card',
-            'label': '签到配置',
+            'type': 'tabs',
+            'style': {
+              'span': 3,
+            },
             'children': [
               {
-                'type': 'field',
-                'name': 'func',
+                'type': 'card',
+                'label': '签到配置',
+                'children': [
+                  {
+                    'type': 'field',
+                    'name': 'func',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'notify',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'use_proxy',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'use_browser_fingerprint',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'retry_count',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'retry_interval',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'history_days',
+                  },
+                ],
               },
               {
-                'type': 'field',
-                'name': 'notify',
+                'type': 'card',
+                'label': '通知与接口',
+                'children': [
+                  {
+                    'type': 'field',
+                    'name': 'notify_bot',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'tgto_base_url',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'tgto_token',
+                  },
+                  {
+                    'type': 'divider',
+                  },
+                  {
+                    'type': 'button',
+                    'label': '刷新机器人列表',
+                    'action': 'run',
+                    'params': {
+                      'func': 'bots',
+                    },
+                    'style': {
+                      'tone': 'default',
+                      'size': 'large',
+                      'variant': 'outline',
+                    },
+                  },
+                ],
               },
               {
-                'type': 'field',
-                'name': 'use_proxy',
-              },
-              {
-                'type': 'field',
-                'name': 'use_browser_fingerprint',
-              },
-              {
-                'type': 'field',
-                'name': 'retry_count',
-              },
-              {
-                'type': 'field',
-                'name': 'retry_interval',
-              },
-              {
-                'type': 'field',
-                'name': 'history_days',
+                'type': 'card',
+                'label': '账号与凭据',
+                'children': [
+                  {
+                    'type': 'field',
+                    'name': 'cookie',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'username',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'user_password',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'site_base',
+                  },
+                ],
               },
             ],
           },
           {
-            'type': 'card',
-            'label': '通知与接口',
+            'type': 'group',
+            'style': {
+              'span': 1,
+            },
             'children': [
               {
-                'type': 'field',
-                'name': 'notify_bot',
-              },
-              {
-                'type': 'field',
-                'name': 'tgto_base_url',
-              },
-              {
-                'type': 'field',
-                'name': 'tgto_token',
-              },
-              {
-                'type': 'divider',
+                'type': 'button',
+                'label': '运行一次',
+                'action': 'run',
+                'params': {
+                  'notify': True,
+                },
+                'style': {
+                  'tone': 'primary',
+                  'size': 'large',
+                  'variant': 'solid',
+                },
               },
               {
                 'type': 'button',
-                'label': '刷新机器人列表',
+                'label': '发送测试通知',
                 'action': 'run',
                 'params': {
-                  'func': 'bots',
+                  'func': 'test_notify',
+                  'notify': True,
                 },
                 'style': {
-                  'tone': 'default',
+                  'tone': 'success',
                   'size': 'large',
-                  'variant': 'outline',
+                  'variant': 'soft',
                 },
-              },
-            ],
-          },
-          {
-            'type': 'card',
-            'label': '账号与凭据',
-            'children': [
-              {
-                'type': 'grid',
-                'columns': 4,
-                'children': [
-                  {
-                    'type': 'group',
-                    'style': {
-                      'span': 3,
-                    },
-                    'children': [
-                      {
-                        'type': 'field',
-                        'name': 'cookie',
-                      },
-                      {
-                        'type': 'field',
-                        'name': 'username',
-                      },
-                      {
-                        'type': 'field',
-                        'name': 'user_password',
-                      },
-                      {
-                        'type': 'field',
-                        'name': 'site_base',
-                      },
-                    ],
-                  },
-                  {
-                    'type': 'group',
-                    'style': {
-                      'span': 1,
-                    },
-                    'children': [
-                      {
-                        'type': 'button',
-                        'label': '运行一次',
-                        'action': 'run',
-                        'params': {
-                          'notify': True,
-                        },
-                        'style': {
-                          'tone': 'primary',
-                          'size': 'large',
-                          'variant': 'solid',
-                        },
-                      },
-                      {
-                        'type': 'button',
-                        'label': '发送测试通知',
-                        'action': 'run',
-                        'params': {
-                          'func': 'test_notify',
-                          'notify': True,
-                        },
-                        'style': {
-                          'tone': 'success',
-                          'size': 'large',
-                          'variant': 'soft',
-                        },
-                      },
-                    ],
-                  },
-                ],
               },
             ],
           },
@@ -355,7 +350,7 @@ PLUGIN_MANIFEST = {
       },
       {
         'type': 'text',
-        'text': '「运行一次」与「发送测试通知」在「账号与凭据」页签的最右侧；「刷新机器人列表」在「通知与接口」页签内。',
+        'text': '「运行一次」与「发送测试通知」固定在表单顶部右侧，与页签标题同一行；「刷新机器人列表」在「通知与接口」页签内。',
         'style': {
           'tone': 'muted',
         },

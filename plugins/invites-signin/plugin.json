@@ -145,40 +145,38 @@
     "components": [
       {"type": "heading", "text": "药丸论坛（invites.fun）自动签到"},
       {"type": "alert", "text": "填写 Cookie 或账号密码后即可运行。结果通知使用 TgtoDrive 已配置的通知机器人：若日志提示未配置 TgtoDrive 地址或令牌，请在「通知与接口」页填写，或设置容器环境变量 TGTO_OPENAPI_BASE_URL / TGTO_OPENAPI_TOKEN 并重启服务。需要每天自动签到时，请在「我的插件 → 定时执行」中新建计划，cron 建议 5 8 * * *（每天 08:05 北京时间），执行功能保持 auto。", "style": {"tone": "warning"}},
-      {"type": "tabs", "children": [
-        {"type": "card", "label": "签到配置", "children": [
-          {"type": "field", "name": "func"},
-          {"type": "field", "name": "notify"},
-          {"type": "field", "name": "use_proxy"},
-          {"type": "field", "name": "use_browser_fingerprint"},
-          {"type": "field", "name": "retry_count"},
-          {"type": "field", "name": "retry_interval"},
-          {"type": "field", "name": "history_days"}
-        ]},
-        {"type": "card", "label": "通知与接口", "children": [
-          {"type": "field", "name": "notify_bot"},
-          {"type": "field", "name": "tgto_base_url"},
-          {"type": "field", "name": "tgto_token"},
-          {"type": "divider"},
-          {"type": "button", "label": "刷新机器人列表", "action": "run", "params": {"func": "bots"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
-        ]},
-        {"type": "card", "label": "账号与凭据", "children": [
-          {"type": "grid", "columns": 4, "children": [
-            {"type": "group", "style": {"span": 3}, "children": [
-              {"type": "field", "name": "cookie"},
-              {"type": "field", "name": "username"},
-              {"type": "field", "name": "user_password"},
-              {"type": "field", "name": "site_base"}
-            ]},
-            {"type": "group", "style": {"span": 1}, "children": [
-              {"type": "button", "label": "运行一次", "action": "run", "params": {"notify": true}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
-              {"type": "button", "label": "发送测试通知", "action": "run", "params": {"func": "test_notify", "notify": true}, "style": {"tone": "success", "size": "large", "variant": "soft"}}
-            ]}
+      {"type": "grid", "columns": 4, "children": [
+        {"type": "tabs", "style": {"span": 3}, "children": [
+          {"type": "card", "label": "签到配置", "children": [
+            {"type": "field", "name": "func"},
+            {"type": "field", "name": "notify"},
+            {"type": "field", "name": "use_proxy"},
+            {"type": "field", "name": "use_browser_fingerprint"},
+            {"type": "field", "name": "retry_count"},
+            {"type": "field", "name": "retry_interval"},
+            {"type": "field", "name": "history_days"}
+          ]},
+          {"type": "card", "label": "通知与接口", "children": [
+            {"type": "field", "name": "notify_bot"},
+            {"type": "field", "name": "tgto_base_url"},
+            {"type": "field", "name": "tgto_token"},
+            {"type": "divider"},
+            {"type": "button", "label": "刷新机器人列表", "action": "run", "params": {"func": "bots"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
+          ]},
+          {"type": "card", "label": "账号与凭据", "children": [
+            {"type": "field", "name": "cookie"},
+            {"type": "field", "name": "username"},
+            {"type": "field", "name": "user_password"},
+            {"type": "field", "name": "site_base"}
           ]}
+        ]},
+        {"type": "group", "style": {"span": 1}, "children": [
+          {"type": "button", "label": "运行一次", "action": "run", "params": {"notify": true}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
+          {"type": "button", "label": "发送测试通知", "action": "run", "params": {"func": "test_notify", "notify": true}, "style": {"tone": "success", "size": "large", "variant": "soft"}}
         ]}
       ]},
       {"type": "divider"},
-      {"type": "text", "text": "「运行一次」与「发送测试通知」在「账号与凭据」页签的最右侧；「刷新机器人列表」在「通知与接口」页签内。", "style": {"tone": "muted"}}
+      {"type": "text", "text": "「运行一次」与「发送测试通知」固定在表单顶部右侧，与页签标题同一行；「刷新机器人列表」在「通知与接口」页签内。", "style": {"tone": "muted"}}
     ]
   }
 }
