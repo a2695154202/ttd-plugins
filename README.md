@@ -128,10 +128,17 @@ python scripts/build_marketplace.py --repo <账号>/<仓库名>
 | `publish.bat --no-publish` | 只到推送为止，不触发 Release |
 | `publish.bat --publish-only` | 跳过打包与提交，只做发布与校验（补发上次漏掉的 Release） |
 | `publish.bat --no-push` | 只打包并提交到本地，不推送 |
+| `publish.bat --no-api-fallback` | `git push` 失败时不改用 GitHub API 兜底 |
 | `publish.bat --dry-run` | 只打印将要执行的命令，不做任何改动 |
 
 也可以直接运行 `python scripts/publish_all.py`（参数相同），或只跑发布环节：
-`python scripts/gh_publish.py`（加 `--verify-only` 可只校验不发布）。
+`python scripts/gh_publish.py`（加 `--verify-only` 可只校验不发布，
+加 `--push` 可先用 API 推送本地 HEAD）。
+
+> `git push` 需要访问 `github.com:443`。若该域名不可达（典型报错
+> `CONNECT tunnel failed, response 502`）而 `api.github.com` 正常，
+> 脚本会自动改用 GitHub Git Data API 构造提交推送 —— 且要求 API 生成的 commit SHA
+> 与本地完全一致，否则中止以免产生分叉。
 
 #### 为什么「推送」不等于「发布」
 
@@ -143,8 +150,9 @@ python scripts/build_marketplace.py --repo <账号>/<仓库名>
 | tag 对应的 Release 还不存在 | `GitHub 下载失败（HTTP 404）；Release API 回退失败：GitHub 下载失败（HTTP 404）` |
 | Release 存在，但附件与目录声明的 `sha256` / `size` 不符（例如改了源码没重新发布） | `GitHub 文件超过允许大小或长度无效` |
 
-`gh_publish.py` 会在发布后**重新下载附件逐字节复核**，与 `plugins.json` 的声明比对；
-不一致会以非零退出码结束，不会出现"以为发布成功、实际装不上"的静默失败。
+`gh_publish.py` 会在发布后**重新下载附件逐字节复核**，与 `plugins.json` 的声明比对，
+结果分三态：一致、**确实需要发布**、**网络故障无法判定**。第三态不会触发发布 ——
+避免一次网络抖动就无谓地重新发版；三者都有明确的退出码。
 
 > ⚠️ **`publish.bat` 必须保持纯 ASCII 内容**：`cmd.exe` 是按系统 ANSI 代码页解析 `.bat` 文件的，
 > 即使写了 `chcp 65001` 也救不了解析阶段；写入 UTF-8 中文会导致整段语法错乱。

@@ -24,16 +24,27 @@ Release 附件的。目录里声明的 ``sha256`` / ``size`` 必须与附件**�
     python scripts/gh_publish.py --verify-only       # 只校验，不触发发布
     python scripts/gh_publish.py --plugin wecom-notify
     python scripts/gh_publish.py --no-wait           # 触发后不等待工作流
+    python scripts/gh_publish.py --push              # 先用 GitHub API 推送本地 HEAD
+                                                     # （git push 被网络阻断时的兜底），
+                                                     # 然后继续校验与发布
+
+校验结果分三态，互不混淆：
+
+* ``ok``       —— 附件与目录声明逐字节一致，无需动作
+* ``mismatch`` —— 确实需要发布（Release 缺失 / 附件缺失 / size 或 sha256 不符）
+* ``unknown``  —— 网络或传输失败，**无法判定**；此时绝不触发发布，
+                  以免一次网络抖动就无谓地重新发版
 
 退出码
     0  全部插件的 Release 附件都与目录声明一致
     1  有插件需要发布、但发布失败或发布后仍不一致
-    2  无法访问 GitHub / 找不到可用凭据 / 其它致命错误
+    2  无法访问 GitHub / 找不到可用凭据 / 有插件未能判定
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -43,6 +54,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -193,6 +205,105 @@ class GitHub:
 
 
 # ---------------------------------------------------------------------------
+# 用 Git Data API 推送（git push 被网络阻断时的兜底）
+# ---------------------------------------------------------------------------
+
+def _git(root, *args, binary=False):
+    proc = subprocess.run(["git", *args], cwd=str(root), capture_output=True)
+    if proc.returncode != 0:
+        raise GitHubError(proc.stderr.decode("utf-8", "replace").strip()
+                          or "git %s 失败" % " ".join(args))
+    return proc.stdout if binary else proc.stdout.decode("utf-8", "replace")
+
+
+def _parse_identity(header, who):
+    match = re.search(rf"^{who} (.*) <(.*)> (\d+) ([+-]\d{{4}})$", header, re.M)
+    if not match:
+        return None
+    name, email, stamp, tz = match.groups()
+    sign = 1 if tz[0] == "+" else -1
+    offset = timezone(sign * timedelta(hours=int(tz[1:3]), minutes=int(tz[3:5])))
+    return {"name": name, "email": email,
+            "date": datetime.fromtimestamp(int(stamp), tz=offset).isoformat()}
+
+
+def push_head_via_api(github, root=ROOT, branch="main"):
+    """把本地 HEAD 推到远端分支，全程只访问 api.github.com。
+
+    为什么需要它：部分网络环境下 ``github.com:443`` 不可达（表现为
+    ``CONNECT tunnel failed, response 502``），但 ``api.github.com`` 正常，
+    此时 ``git push`` 必然失败。本函数用 Git Data API 构造 blob → tree → commit，
+    并且要求 API 生成的 commit SHA 与本地完全一致（否则中止，避免产生分叉）。
+
+    仅支持「远端恰好是本地 HEAD 的父提交」这一情形（即只有一个提交待推送）。
+    """
+    head = _git(root, "rev-parse", "HEAD").strip()
+    remote = github.branch_sha(branch)
+    if not remote:
+        raise GitHubError("读取不到远端分支 %s（检查仓库名与网络）" % branch)
+    if remote == head:
+        return "远端已是该提交，无需推送（%s）" % head[:7]
+
+    raw = _git(root, "cat-file", "commit", "HEAD", binary=True).decode("utf-8", "replace")
+    header, message = raw.split("\n\n", 1)
+    parent_match = re.search(r"^parent (\w+)$", header, re.M)
+    parent = parent_match.group(1) if parent_match else ""
+    if parent != remote:
+        pending = _git(root, "rev-list", "--count", "%s..HEAD" % remote).strip()
+        raise GitHubError(
+            "远端 %s 是 %s，不是本地 HEAD 的父提交（待推送提交数：%s）。"
+            "本兜底一次只推一个提交，请先同步分支再重试。" % (branch, remote[:7], pending))
+
+    author = _parse_identity(header, "author")
+    committer = _parse_identity(header, "committer")
+    changed = [p for p in _git(root, "diff", "--name-only", "HEAD~1", "HEAD").splitlines() if p]
+    if not changed:
+        raise GitHubError("本地 HEAD 相对父提交没有文件改动，无法通过 API 重建提交")
+
+    entries = []
+    for path in changed:
+        blob = _git(root, "show", "HEAD:" + path, binary=True)
+        status, res = github.request(
+            "/repos/%s/git/blobs" % github.repo, method="POST",
+            payload={"content": base64.b64encode(blob).decode(), "encoding": "base64"})
+        if status not in (200, 201):
+            raise GitHubError("创建 blob 失败 %s：HTTP %s" % (path, status))
+        entries.append({"path": path, "mode": "100644", "type": "blob", "sha": res["sha"]})
+
+    status, base = github.request("/repos/%s/git/commits/%s" % (github.repo, parent))
+    if status != 200:
+        raise GitHubError("读取父提交失败：HTTP %s" % status)
+
+    status, tree = github.request(
+        "/repos/%s/git/trees" % github.repo, method="POST",
+        payload={"base_tree": base["tree"]["sha"], "tree": entries})
+    if status not in (200, 201):
+        raise GitHubError("创建 tree 失败：HTTP %s %s" % (status, tree))
+    local_tree = _git(root, "rev-parse", "HEAD^{tree}").strip()
+    if tree["sha"] != local_tree:
+        raise GitHubError("API 生成的 tree 与本地不一致（%s ≠ %s），已中止"
+                          % (tree["sha"][:8], local_tree[:8]))
+
+    status, commit = github.request(
+        "/repos/%s/git/commits" % github.repo, method="POST",
+        payload={"message": message, "tree": tree["sha"], "parents": [parent],
+                 "author": author, "committer": committer})
+    if status not in (200, 201):
+        raise GitHubError("创建提交失败：HTTP %s %s" % (status, commit))
+    new_sha = commit.get("sha")
+    if new_sha != head:
+        raise GitHubError("API 生成的提交与本地不一致（%s ≠ %s），已中止以免分叉"
+                          % (str(new_sha)[:8], head[:8]))
+
+    status, res = github.request(
+        "/repos/%s/git/refs/heads/%s" % (github.repo, branch),
+        method="PATCH", payload={"sha": new_sha, "force": False})
+    if status != 200:
+        raise GitHubError("更新分支 %s 失败：HTTP %s %s" % (branch, status, res))
+    return "已通过 API 推送 %s 个文件，分支 %s → %s" % (len(changed), branch, new_sha[:7])
+
+
+# ---------------------------------------------------------------------------
 # 目录条目 → Release
 # ---------------------------------------------------------------------------
 
@@ -205,33 +316,60 @@ def asset_name_from_entry(entry):
     return (entry.get("download_url", "") or "").rstrip("/").split("/")[-1]
 
 
+def _download_with_retry(github, asset_id, attempts=3):
+    """下载 Release 附件；SSL/连接抖动时重试，避免把网络故障误判为内容不一致。"""
+    last = ""
+    for index in range(attempts):
+        try:
+            return github.download_asset(asset_id)
+        except GitHubError as exc:
+            last = str(exc)
+            if index < attempts - 1:
+                time.sleep(2 * (index + 1))
+    raise GitHubError(last or "下载附件失败")
+
+
 def verify_entry(github, entry):
-    """校验单个插件的 Release 附件是否与目录声明一致。返回 (ok, message)。"""
+    """校验单个插件的 Release 附件是否与目录声明一致。
+
+    返回 ``(status, message)``，其中 ``status`` 为三态之一：
+
+    * ``"ok"``       —— 附件与目录声明逐字节一致
+    * ``"mismatch"`` —— 确实需要发布（Release 缺失、附件缺失、size / sha256 不符）
+    * ``"unknown"``  —— 网络或传输失败，**无法判定**，不可据此触发发布
+    """
     tag = tag_from_entry(entry)
     if not tag:
-        return False, "download_url 不是 .../releases/download/<tag>/<文件名> 结构"
+        return "mismatch", "download_url 不是 .../releases/download/<tag>/<文件名> 结构"
 
-    release = github.get_release(tag)
+    try:
+        release = github.get_release(tag)
+    except GitHubError as exc:
+        return "unknown", "读取 Release 失败：%s" % exc
     if release is None:
-        return False, "Release %s 不存在 —— 需要发布（否则市场报 HTTP 404）" % tag
+        return "mismatch", "Release %s 不存在 —— 需要发布（否则市场报 HTTP 404）" % tag
 
     name = asset_name_from_entry(entry)
     asset = next((a for a in release.get("assets", []) if a.get("name") == name), None)
     if asset is None:
-        return False, "Release %s 中没有附件 %s —— 需要发布" % (tag, name)
+        return "mismatch", "Release %s 中没有附件 %s —— 需要发布" % (tag, name)
 
-    blob = github.download_asset(asset["id"])
+    try:
+        blob = _download_with_retry(github, asset["id"])
+    except GitHubError as exc:
+        return "unknown", "附件下载失败，这是网络问题、不代表附件有错：%s" % exc
+
     digest = hashlib.sha256(blob).hexdigest()
     declared_size = entry.get("size")
     declared_hash = str(entry.get("sha256") or "")
 
     if declared_size is not None and len(blob) != declared_size:
-        return False, ("附件大小不符：实际 %d B，目录声明 %s B —— 需要重新发布"
-                       % (len(blob), declared_size))
+        return "mismatch", ("附件大小不符：实际 %d B，目录声明 %s B —— 需要重新发布"
+                            % (len(blob), declared_size))
     if declared_hash and digest != declared_hash:
-        return False, ("附件 sha256 不符：实际 %s…，目录声明 %s… —— 需要重新发布"
-                       % (digest[:16], declared_hash[:16]))
-    return True, "%s 与目录声明一致（%d B / %s…）" % (name, len(blob), digest[:16])
+        return "mismatch", ("附件 sha256 不符：实际 %s…，目录声明 %s… —— 需要重新发布"
+                            % (digest[:16], declared_hash[:16]))
+    return "ok", "%s 与目录声明一致（%d B / %s…）" % (name, len(blob), digest[:16])
 
 
 def publish_plugin(github, plugin_id, branch="main", wait=True, limit=420):
@@ -306,6 +444,9 @@ def main(argv=None):
     parser.add_argument("--plugin", action="append", default=[],
                         help="只处理指定插件 id，可重复")
     parser.add_argument("--verify-only", action="store_true", help="只校验，不触发发布")
+    parser.add_argument("--push", action="store_true",
+                        help="先把本地 HEAD 用 GitHub API 推送到远端分支"
+                             "（git push 被网络阻断时使用），再继续校验/发布")
     parser.add_argument("--no-wait", action="store_true", help="触发后不等待工作流结束")
     parser.add_argument("--require-sync", action="store_true",
                         help="本地 HEAD 必须与远端分支一致，否则中止（避免发布旧代码）")
@@ -328,6 +469,14 @@ def main(argv=None):
 
     github = GitHub(repo, token)
 
+    if args.push:
+        banner("0/2  用 GitHub API 推送本地 HEAD")
+        try:
+            print("  " + push_head_via_api(github, branch=args.branch), flush=True)
+        except GitHubError as exc:
+            print("[错误] %s" % exc, file=sys.stderr, flush=True)
+            return 2
+
     if args.require_sync:
         remote_sha = github.branch_sha(args.branch)
         local_sha = subprocess.run(
@@ -344,21 +493,26 @@ def main(argv=None):
 
     banner("1/2  校验 Release 附件与 plugins.json")
 
-    pending = []
+    LABELS = {"ok": "OK    ", "mismatch": "待发布", "unknown": "未判定"}
+    pending, unknown = [], []
     for entry in entries:
         plugin_id = entry.get("id", "?")
-        try:
-            ok, message = verify_entry(github, entry)
-        except GitHubError as exc:
-            ok, message = False, "校验失败：%s" % exc
+        status, message = verify_entry(github, entry)
         print("  %-18s v%-8s %s %s"
-              % (plugin_id, entry.get("version", "?"), "OK  " if ok else "待发布", message),
+              % (plugin_id, entry.get("version", "?"), LABELS.get(status, status), message),
               flush=True)
-        if not ok:
+        if status == "mismatch":
             pending.append(plugin_id)
+        elif status == "unknown":
+            unknown.append(plugin_id)
 
     if not pending:
         print("", flush=True)
+        if unknown:
+            print("有 %d 个插件因网络问题未能判定（%s）。"
+                  % (len(unknown), "、".join(unknown)), flush=True)
+            print("这不代表附件有问题，请稍后重跑本脚本复核。", flush=True)
+            return 2
         print("全部插件的 Release 附件都与目录声明一致，无需发布。", flush=True)
         return 0
 
@@ -376,7 +530,7 @@ def main(argv=None):
             info = publish_plugin(github, plugin_id, args.branch, wait=not args.no_wait)
         except GitHubError as exc:
             print("    触发失败：%s" % exc, flush=True)
-            results.append((plugin_id, False, str(exc)))
+            results.append((plugin_id, "mismatch", "触发发布失败：%s" % exc))
             continue
         conclusion = info.get("conclusion")
         print("    工作流结论：%s %s" % (conclusion, info.get("url", "")), flush=True)
@@ -386,26 +540,38 @@ def main(argv=None):
             print("    备注：%s" % info["note"], flush=True)
 
         if args.no_wait:
-            results.append((plugin_id, True, "已触发（未等待）"))
+            results.append((plugin_id, "unknown", "已触发，未等待结果"))
             continue
 
         entry = next(e for e in entries if e.get("id") == plugin_id)
-        try:
-            ok, message = verify_entry(github, entry)
-        except GitHubError as exc:
-            ok, message = False, "复核失败：%s" % exc
-        print("    复核：%s %s" % ("通过" if ok else "未通过", message), flush=True)
-        results.append((plugin_id, ok, message))
+        status, message = verify_entry(github, entry)
+        print("    复核：%s %s"
+              % ({"ok": "通过", "mismatch": "未通过", "unknown": "未能确认"}[status], message),
+              flush=True)
+        results.append((plugin_id, status, message))
 
-    failed = [r for r in results if not r[1]]
-    banner("结果")
-    for plugin_id, ok, message in results:
-        print("  %-18s %s  %s" % (plugin_id, "OK  " if ok else "失败", message), flush=True)
-
-    if failed:
+    if args.no_wait:
+        banner("结果")
+        for plugin_id, _status, message in results:
+            print("  %-18s %s" % (plugin_id, message), flush=True)
         print("", flush=True)
-        print("有 %d 个插件未能完成发布，请到 Actions 页面查看日志。" % len(failed), flush=True)
+        print("工作流已触发，可稍后重跑本脚本复核结果。", flush=True)
+        return 0
+
+    banner("结果")
+    for plugin_id, status, message in results:
+        print("  %-18s %s  %s"
+              % (plugin_id, {"ok": "OK  ", "mismatch": "失败", "unknown": "未确认"}.get(status, status),
+                 message), flush=True)
+
+    if any(status == "mismatch" for _pid, status, _msg in results):
+        print("", flush=True)
+        print("有插件未能完成发布，请到 Actions 页面查看日志。", flush=True)
         return 1
+    if any(status == "unknown" for _pid, status, _msg in results):
+        print("", flush=True)
+        print("有插件已触发发布但结果未确认，请稍后重跑本脚本复核。", flush=True)
+        return 2
     print("", flush=True)
     print("全部发布完成，市场刷新目录后即可正常安装/更新。", flush=True)
     return 0

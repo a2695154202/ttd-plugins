@@ -29,6 +29,13 @@
     所以推送之后必须再触发一次 ``Publish plugin`` 工作流。本脚本自动完成，
     并在工作流结束后重新下载附件逐字节复核；校验不通过会以非零退出码结束。
 
+关于推送失败
+    ``git push`` 需要访问 ``github.com:443``，而部分网络环境下该域名不可达
+    （典型报错 ``CONNECT tunnel failed, response 502``），但 ``api.github.com`` 正常。
+    遇到这种情况本脚本会自动改用 GitHub Git Data API 推送（构造 blob → tree → commit，
+    并要求 API 生成的 commit SHA 与本地完全一致，否则中止以免分叉），无需人工干预。
+    用 ``--no-api-fallback`` 可关闭该兜底。
+
 说明
     * 打包是**确定性输出**（zip 用 STORED、固定时间戳、POSIX 顺序排序），
       重复运行不会改变已发布插件的哈希，也不会让工作流产生多余提交。
@@ -147,13 +154,27 @@ def do_commit(dry, message):
 
 def do_push(args, dry):
     push = git(["push", args.remote, args.branch], dry_run=dry, check=False)
-    if not dry and push.returncode != 0:
-        print("", flush=True)
-        print("[提示] 推送失败。常见原因：", flush=True)
-        print("  - 到 github.com 的网络不通（CONNECT tunnel failed / schannel）：检查代理后重试", flush=True)
-        print("  - 远端有新提交：先 git pull --rebase 再重跑本脚本", flush=True)
-        print("  - 需要登录：git 凭据失效时手动执行一次 git push 登录", flush=True)
+    if dry or push.returncode == 0:
+        return
+
+    print("", flush=True)
+    print("[提示] git push 失败。最常见原因是本机到 github.com 的网络不通", flush=True)
+    print("       （报错形如 CONNECT tunnel failed, response 502）。", flush=True)
+    print("       其它可能：远端有新提交（先 git pull --rebase）、git 凭据失效。", flush=True)
+
+    if args.no_api_fallback:
+        print("       按 --no-api-fallback 未尝试兜底，请检查网络后重跑本脚本。", flush=True)
         raise SystemExit("[错误] git push 失败（本地提交已完成，可直接重试推送）")
+
+    print("       改用 GitHub Git Data API 推送（只访问 api.github.com）…", flush=True)
+    fallback = run_command(
+        [sys.executable, SCRIPTS / "gh_publish.py",
+         "--repo", args.repo, "--branch", args.branch, "--push"],
+        dry_run=False, check=False,
+    )
+    if fallback.returncode != 0:
+        raise SystemExit("[错误] API 兜底推送同样失败（本地提交已完成）。"
+                         "请检查网络后重跑本脚本。")
 
 
 def main(argv=None):
@@ -170,6 +191,8 @@ def main(argv=None):
                         help="推送后不触发 Release 发布")
     parser.add_argument("--publish-only", action="store_true",
                         help="跳过打包与提交，只触发发布并校验")
+    parser.add_argument("--no-api-fallback", action="store_true",
+                        help="git push 失败时不改用 GitHub API 兜底推送")
     parser.add_argument("--dry-run", action="store_true", help="只打印将要执行的命令")
     parser.add_argument("--skip-package", action="store_true",
                         help="跳过打包（只刷新 plugins.json 并提交）")
