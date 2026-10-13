@@ -144,8 +144,20 @@ TGTO_OPENAPI_TOKEN=<在「实用工具 → OpenAPI」创建的令牌>
 
 ### 手动导入
 
+**要导入的是打包产物，不是源码目录里的 `plugin.py`。**
+
+| 想导入的文件 | 从哪里拿 |
+| --- | --- |
+| `invites-signin.py`（单文件，推荐） | 仓库 [Releases](https://github.com/a2695154202/ttd-plugins/releases) 附件，或本仓库 [`dist/invites-signin.py`](../../dist/invites-signin.py) |
+| `invites-signin.zip`（插件包） | 仓库 [Releases](https://github.com/a2695154202/ttd-plugins/releases) 附件 |
+
+> ⚠️ **不要把 `plugins/invites-signin/plugin.py` 当作单文件导入**。它是插件包内入口，清单写在同目录的 `plugin.json` 里，单独导入会被 TgtoDrive 拒绝并提示：
+> `Python 单文件必须在顶层定义唯一的 PLUGIN_MANIFEST 常量字典`。单文件版由 `scripts/package_plugin.py` 在文件开头内联 `PLUGIN_MANIFEST` 后生成，见上表。
+
+步骤：
+
 1. 打开「实用工具 → 我的插件 → 导入插件」。
-2. 选择构建产物 `invites-signin.py`（单文件）**或** `invites-signin.zip`（压缩包），二者选其一导入即可。
+2. 选择 `invites-signin.py`（单文件）**或** `invites-signin.zip`（压缩包），二者选其一导入即可。
 3. 阅读并勾选信任代码的确认项，确认导入。
 4. 打开插件卡片：在「账号与凭据」页签填写 Cookie 或账号密码；「通知与接口」页签填 TgtoDrive 地址与令牌（或改用环境变量），并选择通知机器人；「签到配置」页签按需调整。
 5. 想先验证通知链路时，点「刷新机器人列表」查看序号与名称，再点「发送测试通知」；确认无误后点「运行一次」立即签到并接收通知。
@@ -159,7 +171,12 @@ TGTO_OPENAPI_TOKEN=<在「实用工具 → OpenAPI」创建的令牌>
 python scripts/package_plugin.py --plugin invites-signin
 ```
 
-产物输出到 `dist/`，同时打印 SHA-256 与字节数。
+产物输出到 `dist/`，同时打印 SHA-256 与字节数：
+
+- `dist/invites-signin.py` —— 单文件版，顶层内联 `PLUGIN_MANIFEST`，可直接「导入插件」；
+- `dist/invites-signin.zip` —— 插件包版，内含 `plugin.json` + `plugin.py` + `README.md`。
+
+打包为确定性输出：相同源码重复打包得到完全相同的字节与 SHA-256，因此本地产物与 GitHub Actions 产物哈希一致。
 
 ---
 

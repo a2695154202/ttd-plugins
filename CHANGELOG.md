@@ -26,6 +26,14 @@
 - 「运行一次」按钮：以「执行功能」中选中的功能立即执行一次，并强制发送本次通知。
 - 本地签到历史：保存于插件 `data_dir/history.json`，按 `history_days` 自动清理。
 
+**修复（同版本内修订，版本号保持 1.0.0）**
+
+- **市场目录格式**：`plugins.json` 顶层补上 `"schema_version": 1`，此前只有 `plugins` 数组，会被 TgtoDrive 以「插件目录必须使用 schema_version: 1，且 plugins 最多 500 项」拒绝；生成脚本同步增加 `plugins` ≤ 500 项校验。
+- **单文件清单**：`dist/<id>.py` 的 `PLUGIN_MANIFEST` 改由自写字面量渲染，超长字符串不再折行成相邻字面量（`'a' 'b'` 形式的隐式拼接）。此前用 `pprint` 生成，虽然语法合法，但可能被静态解析实现判为「必须在顶层定义唯一的 PLUGIN_MANIFEST 常量字典」。打包脚本现强制校验：`PLUGIN_MANIFEST` 必须是文件第一条语句、顶层唯一、右侧为字典字面量、且不含隐式字符串拼接。
+- **产物确定性**：`dist/<id>.zip` 由 `ZIP_DEFLATED` 改为 `ZIP_STORED` 并固定时间戳。deflate 输出依赖 zlib 版本，导致开发机与 CI 产物哈希不同、`plugins.json` 反复被判为不同步；改为不压缩后本地与 CI 字节完全一致。
+- **导入指引**：README 明确「不要直接导入 `plugins/<id>/plugin.py`」——它是插件包内入口，清单在同目录 `plugin.json` 中，单独导入会触发上述单文件报错；可导入产物为 `dist/<id>.py` 或 `dist/<id>.zip`。
+- **CI**：`validate.yml` 新增市场目录结构与单文件清单的显式校验。
+
 **协议适配**
 
 - 移除原插件的 `BackgroundScheduler` + `CronTrigger`，改由 TgtoDrive「定时执行」配置 cron（推荐 `5 8 * * *`）。

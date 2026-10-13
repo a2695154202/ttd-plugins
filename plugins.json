@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "plugins": [
     {
       "id": "invites-signin",
@@ -9,8 +10,8 @@
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/invites-signin",
       "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/invites-signin-v1.0.0/invites-signin.zip",
-      "sha256": "bebe80dd597cafff356e3da1ff2de90b7ca4c0fe7c03cc929934251cbf6db9b8",
-      "size": 24371,
+      "sha256": "703b9567b290065778322c8a83147fe9f20fe566ced723f119405bc3d81f2061",
+      "size": 83650,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"

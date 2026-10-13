@@ -14,6 +14,19 @@
 3. 生成压缩包 ``dist/<id>.zip``（``plugin.json`` + 入口 + ``README.md`` + 附带资源）；
 4. 打印产物的 SHA-256 与字节数，供 ``build_marketplace.py`` 与发布流程使用。
 
+关于「单文件必须在顶层定义唯一的 PLUGIN_MANIFEST 常量字典」这条协议约束，
+本脚本做了三重保证：
+
+* ``PLUGIN_MANIFEST`` 是文件里的**第一条语句**，且全文件**只出现一次**赋值；
+* 右侧是**纯字面量**（``ast.literal_eval`` 可解析），不使用变量、函数或表达式；
+* 渲染器**不产生隐式字符串拼接**（``'a' 'b'``）——``pprint`` 会为超长字符串
+  折行成相邻字面量，虽然仍是合法 Python，但会让一部分静态解析实现读不到完整
+  值，因此这里改为自写的单行字符串渲染。
+
+压缩包使用 ``ZIP_STORED`` 而非 ``ZIP_DEFLATED``：deflate 的字节输出依赖 zlib
+版本（开发机与 CI 可能不同），会导致同源产物哈希不一致、``plugins.json`` 反复
+被判为「不同步」；不压缩后产物字节完全确定，本地与 CI 结果一致。
+
 只依赖 Python 标准库，可直接在开发机与 GitHub Actions 上运行。
 """
 
@@ -22,10 +35,11 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import io
 import json
-import pprint
 import re
 import sys
+import tokenize
 import zipfile
 from pathlib import Path
 
@@ -48,6 +62,10 @@ EXCLUDE_FILE_SUFFIXES = {".pyc", ".pyo", ".log"}
 
 # 固定 zip 内时间戳，使相同输入得到相同的 SHA-256，便于校验与复现
 ZIP_DATE_TIME = (2020, 1, 1, 0, 0, 0)
+
+# 不压缩：deflate 的输出字节依赖 zlib 版本，开发机与 GitHub Actions 可能不同，
+# 会让同源产物哈希不一致；ZIP_STORED 下产物字节完全确定。
+ZIP_COMPRESS_TYPE = zipfile.ZIP_STORED
 
 
 def sha256_of(path: Path) -> str:
@@ -165,14 +183,57 @@ def iter_package_files(plugin_dir: Path) -> list[Path]:
     return files
 
 
+def py_literal(value: object, indent: int = 0) -> str:
+    """把 JSON 风格的数据渲染成 Python 字面量源码。
+
+    与 :func:`pprint.pformat` 的关键差异：字符串**永远输出成单行**，不会折行成
+    ``'aaa' 'bbb'`` 这样的隐式拼接，从而保证任何静态解析实现都能读到完整值。
+    """
+    pad = "  " * indent
+    inner = "  " * (indent + 1)
+
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        lines = [
+            f"{inner}{py_literal(key)}: {py_literal(item, indent + 1)}"
+            for key, item in value.items()
+        ]
+        return "{\n" + ",\n".join(lines) + f",\n{pad}}}"
+
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        lines = [f"{inner}{py_literal(item, indent + 1)}" for item in value]
+        return "[\n" + ",\n".join(lines) + f",\n{pad}]"
+
+    if isinstance(value, str):
+        # repr() 总是给出合法的 Python 字符串字面量，且 Python 3 不转义非 ASCII 字符
+        return repr(value)
+
+    if value is True:
+        return "True"
+    if value is False:
+        return "False"
+    if value is None:
+        return "None"
+    if isinstance(value, int):
+        return repr(value)
+    if isinstance(value, float):
+        return repr(value)
+
+    raise SystemExit(f"[错误] 清单中出现无法渲染为字面量的类型：{type(value).__name__}")
+
+
 def render_single_file(manifest: dict, entry_path: Path) -> str:
     """把清单与入口合并为一个可导入的单文件插件。"""
-    literal = pprint.pformat(manifest, sort_dicts=False, width=118, indent=2)
+    literal = py_literal(manifest)
     body = entry_path.read_text(encoding="utf-8")
     plugin_id = manifest.get("id", "")
     return (
         "# -*- coding: utf-8 -*-\n"
         f"# 由 scripts/package_plugin.py 依据 plugins/{plugin_id}/ 自动生成，请勿直接编辑。\n"
+        f"# 单文件插件：顶层唯一的 PLUGIN_MANIFEST 常量字典 + 入口源码。\n"
         "\n"
         f"PLUGIN_MANIFEST = {literal}\n"
         "\n"
@@ -181,32 +242,79 @@ def render_single_file(manifest: dict, entry_path: Path) -> str:
     )
 
 
+def has_implicit_concat(source: str, start_line: int, end_line: int) -> bool:
+    """检查指定行区间内是否存在相邻字符串字面量（``'a' 'b'`` 形式的隐式拼接）。"""
+    reader = io.StringIO(source).readline
+    previous_string = False
+    try:
+        for token in tokenize.generate_tokens(reader):
+            if token.type in {tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT,
+                              tokenize.INDENT, tokenize.DEDENT}:
+                continue
+            if not (start_line <= token.start[0] and (token.end[0] or token.start[0]) <= end_line):
+                previous_string = False
+                continue
+            if token.type == tokenize.STRING:
+                if previous_string:
+                    return True
+                previous_string = True
+            else:
+                previous_string = False
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return False
+    return False
+
+
 def assert_manifest_is_literal(source: str) -> None:
     """确认生成的单文件里 PLUGIN_MANIFEST 是可直接静态读取的字面量赋值。"""
     tree = ast.parse(source)
     assignments = [
-        node
-        for node in tree.body
+        index
+        for index, node in enumerate(tree.body)
         if isinstance(node, ast.Assign)
         and any(isinstance(t, ast.Name) and t.id == "PLUGIN_MANIFEST" for t in node.targets)
     ]
+
     if len(assignments) != 1:
-        raise SystemExit(f"[错误] 单文件必须且只能有一次 PLUGIN_MANIFEST 赋值，实际 {len(assignments)} 次")
+        raise SystemExit(
+            f"[错误] 单文件必须且只能有一次顶层 PLUGIN_MANIFEST 赋值，实际 {len(assignments)} 次"
+        )
+    if assignments[0] != 0:
+        raise SystemExit(
+            f"[错误] PLUGIN_MANIFEST 必须是文件的第一条语句，实际位于第 {assignments[0] + 1} 条"
+        )
+
+    node = tree.body[assignments[0]]
+    if not isinstance(node.value, ast.Dict):
+        raise SystemExit("[错误] PLUGIN_MANIFEST 右侧必须是字典字面量")
+
     try:
-        ast.literal_eval(assignments[0].value)
-    except ValueError as exc:
+        parsed = ast.literal_eval(node.value)
+    except (ValueError, SyntaxError) as exc:
         raise SystemExit(f"[错误] PLUGIN_MANIFEST 必须是字面量：{exc}")
+
+    if not isinstance(parsed, dict) or not parsed:
+        raise SystemExit("[错误] PLUGIN_MANIFEST 解析结果必须是非空字典")
+
+    # 相邻字符串字面量在 CPython 中会被合并成单个 ast.Constant，语法上合法，
+    # 但可能被逐 token 读取的实现误判，这里显式禁止。
+    if has_implicit_concat(source, node.lineno, node.end_lineno):
+        raise SystemExit("[错误] PLUGIN_MANIFEST 中出现了隐式字符串拼接")
+
+    # 反向校验：源码里不允许再以其它形式出现同名标识符（例如第二次赋值）
+    if len(re.findall(r"^\s*PLUGIN_MANIFEST\s*=", source, flags=re.MULTILINE)) != 1:
+        raise SystemExit("[错误] 源码中 PLUGIN_MANIFEST 赋值语句不唯一")
 
 
 def build_zip(plugin_dir: Path, out_path: Path) -> int:
     files = iter_package_files(plugin_dir)
     if not files:
         raise SystemExit(f"[错误] {plugin_dir} 内没有可打包的文件")
-    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(out_path, "w", ZIP_COMPRESS_TYPE) as archive:
         for path in files:
             rel = path.relative_to(plugin_dir).as_posix()
             info = zipfile.ZipInfo(rel, date_time=ZIP_DATE_TIME)
-            info.compress_type = zipfile.ZIP_DEFLATED
+            info.compress_type = ZIP_COMPRESS_TYPE
             info.external_attr = 0o644 << 16
             archive.writestr(info, path.read_bytes())
     return len(files)

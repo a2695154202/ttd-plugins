@@ -29,7 +29,19 @@
     日志与返回值中也不回显令牌。
 """
 
-# >>> PLUGIN_MANIFEST <<<
+# ---------------------------------------------------------------------------
+# 关于插件清单
+# ---------------------------------------------------------------------------
+# 本文件是**插件包内入口**：清单写在同目录的 plugin.json 里，这里不写
+# PLUGIN_MANIFEST。打包时 scripts/package_plugin.py 会把 plugin.json 的内容
+# 内联到 dist/invites-signin.py 的开头，生成可单独导入的单文件版。
+#
+# 若把本文件当作「Python 单文件」单独导入，TgtoDrive 会报
+#   「Python 单文件必须在顶层定义唯一的 PLUGIN_MANIFEST 常量字典」
+# 这是预期行为，不是插件损坏。请改用下面两种产物之一：
+#   * dist/invites-signin.py   单文件，顶层内联 PLUGIN_MANIFEST
+#   * dist/invites-signin.zip  插件包（plugin.json + plugin.py + README.md）
+# 两者都由 scripts/package_plugin.py 生成，随 Release 分发。
 
 import json
 import os

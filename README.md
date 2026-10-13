@@ -35,10 +35,14 @@
 
 ### 方式二：手动导入
 
-1. 打开本仓库的 **Releases** 页面，下载目标版本的 `.py` 或 `.zip` 附件。
+1. 下载目标版本的可导入产物（二选一）：
+   - [**Releases**](../../releases) 页面的附件：`<插件 id>.py`（单文件）或 `<插件 id>.zip`（插件包）；
+   - 或仓库内已提交的单文件版：[`dist/<插件 id>.py`](dist)。
 2. 在 TgtoDrive 打开「实用工具 → 我的插件 → 导入插件」。
 3. 选择文件，阅读并勾选信任确认项后导入。
 
+> ⚠️ **不要直接导入 `plugins/<插件 id>/plugin.py`。** 它是插件包内入口，清单写在同一目录的 `plugin.json` 里；把源码入口当「Python 单文件」导入会被拒绝并提示 `Python 单文件必须在顶层定义唯一的 PLUGIN_MANIFEST 常量字典`。可导入的单文件由 `scripts/package_plugin.py` 在文件开头内联 `PLUGIN_MANIFEST` 后生成。
+>
 > 也可以自行构建：见下方 [本地构建](#本地构建)。
 
 ---
@@ -61,7 +65,9 @@
 ├── scripts/
 │   ├── package_plugin.py          # 打包插件并计算 sha256 / size
 │   └── build_marketplace.py       # 扫描 plugins/ 生成 plugins.json
-├── plugins.json                   # 插件市场目录
+├── dist/
+│   └── invites-signin.py          # 单文件版产物（可直接导入；zip 不入库，随 Release 分发）
+├── plugins.json                   # 插件市场目录 schema_version 1
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 └── LICENSE
@@ -70,7 +76,10 @@
 约定：
 
 - 每个插件位于 `plugins/<插件 id>/`，目录名与 `plugin.json` 中的 `id` 一致。
-- 插件源码目录只放**源码与文档**；打包产物写入 `dist/`（已在 `.gitignore` 中忽略），通过 Release 分发。
+- 插件源码目录只放**源码与文档**；打包产物写入 `dist/`，通过 Release 分发。
+  `dist/*.py`（单文件版）入库以便直接下载导入，`dist/*.zip` 不入库。
+- 单文件版由 `scripts/package_plugin.py` 在文件开头**内联唯一的 `PLUGIN_MANIFEST` 字典字面量**；
+  源码目录里的 `plugin.py` 不带清单，不能当作单文件导入。
 - `docs/` 下为 TgtoDrive 官方文档与接口规范的开发参考存档，版权归 TgtoDrive 项目所有。
 
 ---
@@ -104,9 +113,14 @@ python scripts/build_marketplace.py --repo <账号>/<仓库名>
 
 发布约束（由 TgtoDrive 插件市场校验）：
 
+- `plugins.json` 顶层必须是 `{"schema_version": 1, "plugins": [...]}`：
+  `schema_version` 为整数 `1`，`plugins` 为数组且**最多 500 项**。
 - `sha256` 必须是**最终附件的真实摘要**，`size` 必须是附件的真实字节数，均由脚本计算，不得手写。
 - `version` 遵循 PEP 440，推荐 `1.0.0`；`id` 与 `version` 必须与插件内清单精确一致。
-- 附件必须是 TgtoDrive 支持的单文件 `.py` 或插件包，且符合插件协议。
+- 附件必须是 TgtoDrive 支持的单文件 `.py` 或插件包，且符合插件协议：
+  单文件在顶层**有且仅有一次** `PLUGIN_MANIFEST = {...}` 字面量赋值。
+- 打包为**确定性输出**：zip 使用 `ZIP_STORED` 且固定时间戳，相同源码在任何 Python 版本下
+  都得到相同字节与 SHA-256，本地产物与 CI 产物哈希一致。
 
 ---
 

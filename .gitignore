@@ -2,7 +2,10 @@
 .workbuddy/
 
 # ---- 构建产物（由 scripts/package_plugin.py 与 Release 工作流生成）----
-dist/
+# dist/ 下只放行单文件版 .py（方便直接从仓库下载后导入）；
+# 压缩包 .zip 不入库，随 Release 附件分发。
+dist/*
+!dist/*.py
 build/
 *.pyz
 

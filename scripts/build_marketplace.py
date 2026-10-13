@@ -10,6 +10,10 @@
 脚本扫描 ``plugins/*/plugin.json``，为每个插件从 ``dist/`` 中找到打包产物，
 计算真实的 SHA-256 与字节数，并按固定 tag 拼出 Release 下载地址。
 
+输出顶层结构固定为 ``{"schema_version": 1, "plugins": [...]}`` ——
+TgtoDrive 读取市场目录时会校验 ``schema_version`` 必须为整数 ``1``，
+且 ``plugins`` 数组最多 500 项。
+
 默认读取每个插件目录下可选的 ``marketplace.json`` 覆盖市场元数据
 （``category`` / ``homepage`` / ``python_requires`` / ``requirements`` /
 ``status`` / ``notice``），未提供时使用下方默认值。
@@ -33,6 +37,11 @@ DIST_DIR = REPO_ROOT / "dist"
 DEFAULT_OUTPUT = REPO_ROOT / "plugins.json"
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+# TgtoDrive 插件市场目录的协议约束：顶层必须是
+# {"schema_version": 1, "plugins": [...]}，且 plugins 最多 500 项。
+SCHEMA_VERSION = 1
+MAX_PLUGINS = 500
 
 VALID_STATUS = {"active", "withdrawn"}
 
@@ -151,12 +160,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Release tag 模板，可用 {id} 与 {version}（默认 {id}-v{version}）",
     )
     parser.add_argument("--out", default=str(DEFAULT_OUTPUT), help="输出文件（默认仓库根 plugins.json）")
-    parser.add_argument(
-        "--format",
-        choices=("plugins", "array"),
-        default="plugins",
-        help="顶层结构：plugins 为 {\"plugins\": [...]}，array 为纯数组（默认 plugins）",
-    )
     args = parser.parse_args(argv)
 
     repo = (args.repo or detect_repository()).strip()
@@ -181,7 +184,12 @@ def main(argv: list[str] | None = None) -> int:
     ]
     entries.sort(key=lambda item: item["id"])
 
-    document = entries if args.format == "array" else {"plugins": entries}
+    if len(entries) > MAX_PLUGINS:
+        raise SystemExit(
+            f"[错误] 市场目录最多 {MAX_PLUGINS} 项插件，当前 {len(entries)} 项"
+        )
+
+    document = {"schema_version": SCHEMA_VERSION, "plugins": entries}
 
     out_path = Path(args.out)
     if not out_path.is_absolute():

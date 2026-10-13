@@ -38,6 +38,53 @@ jobs:
             python -m py_compile "$entry"
           done
 
+      - name: 校验市场目录结构与单文件清单
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import ast
+          import json
+          import sys
+          from pathlib import Path
+
+          doc = json.loads(Path("plugins.json").read_text(encoding="utf-8"))
+          if doc.get("schema_version") != 1:
+              sys.exit("[错误] plugins.json 顶层 schema_version 必须为整数 1")
+          plugins = doc.get("plugins")
+          if not isinstance(plugins, list):
+              sys.exit("[错误] plugins.json 顶层 plugins 必须是数组")
+          if not 0 < len(plugins) <= 500:
+              sys.exit(f"[错误] plugins 项数必须在 1-500 之间，当前 {len(plugins)}")
+
+          targets = sorted(Path("dist").glob("*.py"))
+          if not targets:
+              sys.exit("[错误] dist/ 下没有单文件产物，请先运行 scripts/package_plugin.py --all")
+
+          for path in targets:
+              tree = ast.parse(path.read_text(encoding="utf-8"))
+              assigns = [
+                  node
+                  for node in tree.body
+                  if isinstance(node, ast.Assign)
+                  and any(
+                      isinstance(t, ast.Name) and t.id == "PLUGIN_MANIFEST"
+                      for t in node.targets
+                  )
+              ]
+              if len(assigns) != 1:
+                  sys.exit(
+                      f"[错误] {path} 必须在顶层定义唯一的 PLUGIN_MANIFEST，实际 {len(assigns)} 次"
+                  )
+              if not isinstance(assigns[0].value, ast.Dict):
+                  sys.exit(f"[错误] {path} 的 PLUGIN_MANIFEST 必须是字典字面量")
+              parsed = ast.literal_eval(assigns[0].value)
+              if not isinstance(parsed, dict) or not parsed:
+                  sys.exit(f"[错误] {path} 的 PLUGIN_MANIFEST 解析结果必须是非空字典")
+              print(f"{path.as_posix()} 单文件清单校验通过（{len(parsed)} 个字段）")
+
+          print(f"plugins.json 校验通过：schema_version=1，{len(plugins)} 个插件")
+          PY
+
       - name: 检查 plugins.json 是否与产物同步
         run: |
           set -euo pipefail
