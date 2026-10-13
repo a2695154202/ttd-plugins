@@ -101,8 +101,10 @@ def build_entry(
 
     if not artifact.is_file():
         raise SystemExit(
-            f"[错误] 未找到产物 {artifact.relative_to(REPO_ROOT).as_posix()}，"
-            "请先运行：python scripts/package_plugin.py --all"
+            f"[错误] 未找到产物 {artifact.relative_to(REPO_ROOT).as_posix()}。\n"
+            "  market 目录是按 plugins/ 下的**每一个**插件生成的，因此所有插件都必须先打包，\n"
+            f"  只打包 {plugin_id} 是不够的。请运行：\n"
+            "    python scripts/package_plugin.py --all"
         )
 
     overrides = load_marketplace_metadata(plugin_dir)
