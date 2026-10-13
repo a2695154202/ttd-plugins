@@ -10,6 +10,9 @@
   * 仅用 Cookie 签到 / 仅用账号密码签到 / 仅查询签到状态 / 查看本地签到历史。
   * 签到成功或失败后，通过 TgtoDrive 已配置的 Telegram 通知机器人推送结果；
     可在「通知机器人」下拉框指定使用哪一个，默认自动选主通知机器人。
+  * 可选地，同时通过「企业微信通知」插件（wecom-notify）发送**微信通知**：
+    走 TgtoDrive OpenAPI 的插件运行接口调用该插件，企业 ID / Secret 等凭据与收件人
+    沿用它在插件里已保存的设置，本插件只传要发送的内容；支持文本与带图卡片两种形式。
   * 诊断功能：读取 TgtoDrive 通知机器人列表、发送测试通知。
   * 运行结果内嵌「运行日志」窗口；清单提供「运行一次」按钮，
     点击后立即执行当前选中的功能，并强制把本次结果通知出去。
@@ -68,6 +71,15 @@ CONNECT_TIMEOUT = 10
 READ_TIMEOUT = 30
 TELEGRAM_API = "https://api.telegram.org"
 NOTIFY_TITLE = "【💊药丸签到】任务完成"
+
+# 微信通知：通过 TgtoDrive OpenAPI 调用「企业微信通知」插件（wecom-notify）发送。
+# 调用方式见该插件的 CALLING.md：POST /api/toolbox/plugins/wecom-notify/run
+WECOM_PLUGIN_ID = "wecom-notify"
+WECOM_TITLE = "【💊药丸签到】"
+WECOM_CARD_TITLE = "💊 药丸签到"
+# 提交任务后轮询结果的次数与间隔（拿不到 job_id 或超时都不影响签到本身）
+WECOM_JOB_POLL_ATTEMPTS = 3
+WECOM_JOB_POLL_INTERVAL = 2
 
 FUNC_LABELS = {
     "auto": "自动签到（Cookie 优先，失败回退账号密码）",
@@ -203,6 +215,17 @@ def _normalize_response(resp):
         data = None
 
     return _Resp(status, text, cookies, headers, data)
+
+
+def _as_bool(value, default=False):
+    """宽容地把表单值转成布尔：支持真布尔、数字与常见字符串写法。"""
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in ("1", "true", "yes", "on", "y", "t", "是", "开启")
 
 
 def _mask_proxy(url):
@@ -473,6 +496,16 @@ class _SigninRunner(object):
             self.notify_bot = NOTIFY_BOT_AUTO
         self.tgto_base_url = str(self.p.get("tgto_base_url") or "").strip()
         self.tgto_token = str(self.p.get("tgto_token") or "").strip()
+
+        # 微信通知：通过 OpenAPI 调用 wecom-notify 插件
+        self.wecom_notify = _as_bool(self.p.get("wecom_notify"), False)
+        self.wecom_msgtype = str(self.p.get("wecom_msgtype") or "text").strip() or "text"
+        if self.wecom_msgtype not in ("text", "template_card"):
+            self.wecom_msgtype = "text"
+        self.wecom_touser = str(self.p.get("wecom_touser") or "").strip()
+        self.wecom_card_image = str(self.p.get("wecom_card_image") or "").strip()
+        self._wecom_state = ""
+        self._wecom_error = ""
         self.use_proxy = bool(self.p.get("use_proxy", True))
         self.use_fingerprint = bool(self.p.get("use_browser_fingerprint", False))
         self.history_days = self._as_int(self.p.get("history_days"), 30, 1, 3650, "历史记录保留天数")
@@ -1056,6 +1089,132 @@ class _SigninRunner(object):
         self.log.info("通知已通过「%s」发送成功" % (bot.get("name") or "通知机器人"))
         return True, "sent"
 
+    # -- 微信通知（调用企业微信通知插件）--------------------------------------
+
+    def _notify_wecom(self, title, items):
+        """通过 TgtoDrive OpenAPI 调用「企业微信通知」插件发送一条微信通知。
+
+        ``items`` 为 ``[(键, 值), ...]``：text 模式拼成多行文本，
+        template_card 模式作为卡片的键值列表。
+        企业 ID / Secret 等凭据不在这里传，由 wecom-notify 里已保存的设置提供。
+        """
+        if not self.wecom_notify:
+            self._wecom_state = "disabled"
+            return False
+
+        base = str(self.tgto_base_url or os.environ.get("TGTO_OPENAPI_BASE_URL", "")).strip()
+        token = str(self.tgto_token or os.environ.get("TGTO_OPENAPI_TOKEN", "")).strip()
+        base = base.rstrip("/")
+        if not base or not token:
+            self.log.warn("已开启微信通知，但未配置「TgtoDrive 地址」或「OpenAPI 令牌」，"
+                          "本次跳过微信通知")
+            self._wecom_state = "no-endpoint"
+            return False
+
+        params = {"func": "send", "msgtype": self.wecom_msgtype}
+        if self.wecom_touser:
+            params["touser"] = self.wecom_touser
+        if self.wecom_msgtype == "template_card":
+            params["title"] = "%s %s" % (WECOM_CARD_TITLE, title)
+            params["card_content"] = "\n".join("%s=%s" % (key, value) for key, value in items)
+            if self.wecom_card_image:
+                params["card_image"] = self.wecom_card_image
+        else:
+            lines = ["%s%s" % (WECOM_TITLE, title)]
+            lines.extend("%s：%s" % (key, value) for key, value in items)
+            params["content"] = "\n".join(lines)
+
+        url = "%s/api/toolbox/plugins/%s/run" % (base, WECOM_PLUGIN_ID)
+        self.log.info("调用「%s」插件发送微信通知（%s 类型）" % (WECOM_PLUGIN_ID, self.wecom_msgtype))
+        try:
+            import requests
+
+            resp = requests.post(
+                url,
+                headers={"Authorization": "Bearer %s" % token},
+                json={"params": params},
+                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+                allow_redirects=False,
+            )
+        except Exception as exc:
+            self.log.warn("调用企业微信通知插件失败：%s" % exc)
+            self._wecom_state = "call-error"
+            return False
+
+        if resp.status_code not in (200, 201, 202):
+            self.log.warn("调用企业微信通知插件失败：HTTP %s %s"
+                          % (resp.status_code, (resp.text or "")[:160]))
+            self._wecom_state = "http-%s" % resp.status_code
+            return False
+
+        try:
+            payload = resp.json() or {}
+        except Exception:
+            payload = {}
+
+        job_id = payload.get("job_id") or payload.get("id") or payload.get("task_id")
+        if not job_id:
+            self.log.info("微信通知任务已提交（响应未包含 job_id，视为已受理）")
+            self._wecom_state = "submitted"
+            return True
+
+        self.log.info("微信通知任务已提交，job_id=%s" % job_id)
+        ok, note = self._poll_wecom_job(base, token, job_id)
+        if ok is True:
+            self.log.info("微信通知发送成功")
+            self._wecom_state = "sent"
+            return True
+        if ok is False:
+            self.log.warn("微信通知发送失败：%s" % note)
+            self._wecom_state = "failed"
+            self._wecom_error = note
+            return False
+        self.log.info("未在等待时间内取到微信通知结果（任务仍在后台执行）")
+        self._wecom_state = "pending"
+        return True
+
+    def _poll_wecom_job(self, base, token, job_id):
+        """轮询 wecom-notify 的任务结果，返回 ``(True/False/None, 说明)``。"""
+        url = "%s/api/toolbox/plugins/jobs/%s" % (base, job_id)
+        headers = {"Authorization": "Bearer %s" % token}
+        for attempt in range(WECOM_JOB_POLL_ATTEMPTS):
+            if attempt:
+                time.sleep(WECOM_JOB_POLL_INTERVAL)
+            try:
+                import requests
+
+                resp = requests.get(url, headers=headers,
+                                    timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+                                    allow_redirects=False)
+                data = resp.json() or {}
+            except Exception:
+                continue
+
+            if not isinstance(data, dict):
+                continue
+            result = data.get("result")
+            if not isinstance(result, dict):
+                result = data
+            status = str(result.get("status") or "").strip().lower()
+            if status in ("ok", "success", "done", "completed"):
+                return True, "sent"
+            if status in ("failed", "error", "failure"):
+                return False, str(result.get("error") or "发送失败")
+        return None, "pending"
+
+    def _wecom_row(self):
+        """结果表里的「微信通知」一行。"""
+        if not self.wecom_notify:
+            return "未启用"
+        return {
+            "sent": "已发送",
+            "submitted": "已提交",
+            "pending": "已提交（后台执行，未确认结果）",
+            "no-endpoint": "未配置 TgtoDrive 地址或令牌",
+            "call-error": "调用失败（详见日志）",
+            "failed": "发送失败（详见日志）",
+        }.get(self._wecom_state, "本次未发送")
+
     # -- 结果装配 ----------------------------------------------------------
 
     def _status_alert(self, ok, already, failed=False):
@@ -1087,6 +1246,7 @@ class _SigninRunner(object):
             ["网络代理", _mask_proxy(proxy) if proxy else "未使用"],
             ["浏览器指纹", "已启用" if self.use_fingerprint else "未启用"],
             ["通知机器人", self._notify_bot_row()],
+            ["微信通知", self._wecom_row()],
         ]
 
     def _notify_bot_row(self):
@@ -1338,6 +1498,7 @@ class _SigninRunner(object):
         }
 
     def _notify_failure(self, reason):
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         body = (
             "━━━━━━━━━━━━━━\n"
             "✨ 状态：❌签到失败\n"
@@ -1345,13 +1506,19 @@ class _SigninRunner(object):
             "❗ 原因：%s\n"
             "━━━━━━━━━━━━━━\n"
             "🕐 时间：%s"
-        ) % (reason, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        ) % (reason, now)
+        self._notify_wecom("签到失败", [
+            ("状态", "❌ 签到失败"),
+            ("原因", reason),
+            ("时间", now),
+        ])
         return self._notify(body)
 
     def _notify_success(self, state, already):
         status_text = "✅今日已签到" if already else "✅已签到"
         money = (state or {}).get("money")
         continuous = (state or {}).get("totalContinuousCheckIn")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         body = (
             "━━━━━━━━━━━━━━\n"
             "✨ 状态：%s\n"
@@ -1361,7 +1528,13 @@ class _SigninRunner(object):
             "📆 累计签到：%s天\n"
             "━━━━━━━━━━━━━━\n"
             "🕐 签到时间：%s"
-        ) % (status_text, money, continuous, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        ) % (status_text, money, continuous, now)
+        self._notify_wecom("今日已签到" if already else "签到成功", [
+            ("状态", status_text),
+            ("剩余药丸", money),
+            ("累计签到", "%s 天" % continuous),
+            ("时间", now),
+        ])
         return self._notify(body)
 
     def _do_signin(self):

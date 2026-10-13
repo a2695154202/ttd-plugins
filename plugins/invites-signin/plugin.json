@@ -62,7 +62,41 @@
       "label": "OpenAPI 令牌（可选）",
       "type": "password",
       "default": "",
-      "help": "留空则读取容器环境变量 TGTO_OPENAPI_TOKEN。仅用于读取通知机器人配置与全局代理。注意：插件设置以明文 JSON 保存在服务器的插件目录，管理员可读取；更在意安全时请改用环境变量并把此项留空。令牌不会出现在运行日志或返回值中。"
+      "help": "留空则读取容器环境变量 TGTO_OPENAPI_TOKEN。用于读取通知机器人配置与全局代理，以及调用「企业微信通知」插件发送微信通知。注意：插件设置以明文 JSON 保存在服务器的插件目录，管理员可读取；更在意安全时请改用环境变量并把此项留空。令牌不会出现在运行日志或返回值中。"
+    },
+    {
+      "name": "wecom_notify",
+      "label": "同时发送微信通知",
+      "type": "boolean",
+      "default": false,
+      "help": "开启后，签到成功或失败都会调用「企业微信通知」插件（wecom-notify）发送一条微信通知。需先在插件市场安装并配置好该插件，并在「通知与接口」页填写「TgtoDrive 地址」与「OpenAPI 令牌」。"
+    },
+    {
+      "name": "wecom_msgtype",
+      "label": "微信通知形式",
+      "type": "select",
+      "default": "text",
+      "options": [
+        {"label": "文本消息 text", "value": "text"},
+        {"label": "卡片通知 template_card（带图）", "value": "template_card"}
+      ],
+      "help": "选择卡片形式时，卡片的图片、来源名称等样式沿用「企业微信通知」插件里已保存的卡片设置。"
+    },
+    {
+      "name": "wecom_touser",
+      "label": "微信接收成员（可选）",
+      "type": "text",
+      "default": "",
+      "placeholder": "留空则使用企业微信通知插件里已保存的收件人",
+      "help": "填写 UserID（多个用 | 分隔）或 @all；留空则完全沿用「企业微信通知」插件的收件人设置。"
+    },
+    {
+      "name": "wecom_card_image",
+      "label": "微信卡片图片（可选）",
+      "type": "text",
+      "default": "",
+      "placeholder": "留空则使用企业微信通知插件里已保存的卡片图片",
+      "help": "仅「卡片通知」形式生效；留空则沿用「企业微信通知」插件的卡片图片设置。可填 http(s) 链接、内网地址或容器内本地图片路径。"
     },
     {
       "name": "use_proxy",
@@ -160,6 +194,11 @@
             {"type": "field", "name": "notify_bot"},
             {"type": "field", "name": "tgto_base_url"},
             {"type": "field", "name": "tgto_token"},
+            {"type": "divider"},
+            {"type": "field", "name": "wecom_notify"},
+            {"type": "field", "name": "wecom_msgtype"},
+            {"type": "field", "name": "wecom_touser"},
+            {"type": "field", "name": "wecom_card_image"},
             {"type": "divider"},
             {"type": "button", "label": "刷新机器人列表", "action": "run", "params": {"func": "bots"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
           ]},
