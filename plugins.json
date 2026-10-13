@@ -28,8 +28,8 @@
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/wecom-notify",
       "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/wecom-notify-v1.0.0/wecom-notify.zip",
-      "sha256": "7c5b95021f56a9c381e84799de3f6698504fb18205302da7ca15e76a92a3121f",
-      "size": 143846,
+      "sha256": "026c6a156ad2363f840391070ab2ac23ff810ce39a4df13033842b2b126e7385",
+      "size": 156915,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"

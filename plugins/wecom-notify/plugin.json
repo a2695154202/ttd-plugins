@@ -12,16 +12,14 @@
       "name": "func",
       "label": "执行功能",
       "type": "select",
-      "default": "send",
+      "default": "test",
       "options": [
-        {"label": "发送消息（按下方内容）", "value": "send"},
-        {"label": "发送测试消息（按两个内容框发送）", "value": "test"},
+        {"label": "发送测试消息（内置内容，文本 + 卡片各一条）", "value": "test"},
         {"label": "检查配置（获取 access_token）", "value": "config"},
-        {"label": "查询应用可见范围成员", "value": "users"},
         {"label": "查看发送历史（本地记录）", "value": "history"},
         {"label": "查看调用方法（供其他插件调用）", "value": "docs"}
       ],
-      "help": "顶部右侧「发送消息」按「消息类型」发送「文本消息内容」；「发送测试消息」会先检查两个内容框 —— 都有内容就依次发送（间隔 3 秒），只有一条就只发一条，都没有则报错。"
+      "help": "「发送测试消息」的文本与卡片内容已内置在插件里，无需填写：点击后会依次发出一条文本消息和一条卡片消息（间隔 3 秒），用来验证「配置 + 网络 + 收件人」整条链路。\n\n本插件还向其它插件提供「发送消息（send）」能力，但那需要传入正文参数，因此只在接口层开放，不在本界面出现 —— 用法见「查看调用方法」或仓库里的 CALLING.md。"
     },
     {
       "name": "msgtype",
@@ -30,11 +28,12 @@
       "default": "text",
       "options": [
         {"label": "文本 text（微信可收）", "value": "text"},
-        {"label": "markdown（微信可收，排版更好看）", "value": "markdown"},
+        {"label": "图文消息 news（微信可收、带图，推荐）", "value": "news"},
         {"label": "文本卡片 textcard（微信可收，带标题与跳转按钮）", "value": "textcard"},
+        {"label": "markdown（仅企业微信可收，微信收不到）", "value": "markdown"},
         {"label": "卡片通知 template_card（仅企业微信可收，微信收不到）", "value": "template_card"}
       ],
-      "help": "text 与 markdown 正文上限 2048 字节（约 680 个汉字），超出会按「超长消息自动分段」处理；textcard 需要同时填「卡片标题」；选「卡片通知」时请到「卡片通知」页签填写卡片参数。\n\n⚠ 微信接收范围：企业微信官方明确「微信插件不支持接收模板卡片消息」—— 文本 / markdown / 文本卡片都可以在微信收到，而「卡片通知」（template_card）**只会在企业微信客户端出现，微信里一定收不到**，这与收件人权限无关。需要微信也能收到时，请选用前三种类型。"
+      "help": "【微信可收性】这是企业微信的官方限制，与收件人配置无关：\n• 微信可以收到：文本 text、图文消息 news、文本卡片 textcard；\n• 微信收不到：markdown（文档明确「微工作台（原企业号）不支持展示 markdown 消息」）、卡片通知 template_card（官方技术支持明确「微信插件不支持接收模板卡片消息」）。\n所以想「既有卡片效果、微信又能收到」时，请用「图文消息 news」——大图 + 标题 + 描述 + 点击跳转，是微信里最接近卡片的形态。\n\n【长度限制】text / markdown 正文上限 2048 字节（约 680 汉字），超出按「超长消息自动分段」处理；news 标题 ≤128 字节、描述 ≤512 字节；textcard 与 news 需要「卡片标题」；「卡片图片」对 news 同样生效。\n\n【若微信可收的类型仍收不到】请检查管理后台该应用是否勾选了「在微工作台中始终进入主页」——勾选后应用在微信端只能收到文本消息，其他类型会被转换成「到企业微信查看」的提示。"
     },
     {
       "name": "touser",
@@ -69,27 +68,19 @@
     },
     {
       "name": "title",
-      "label": "卡片标题",
+      "label": "文本卡片（不填时用内置测试标题）",
       "type": "text",
       "default": "",
-      "placeholder": "仅文本卡片消息需要",
-      "help": "消息类型选择 textcard 时必填，128 字节以内。"
+      "placeholder": "文本卡片 / 图文消息 / 卡片通知 的标题",
+      "help": "作为 textcard、图文消息 news、卡片通知的标题。textcard 必填（128 字节以内）；news 不填时自动用「渠道名称 + 通知」占位。"
     },
     {
       "name": "url",
       "label": "卡片跳转链接",
       "type": "text",
       "default": "",
-      "placeholder": "https://example.com/detail（仅文本卡片消息）",
-      "help": "消息类型选择 textcard 时的点击跳转地址，需带 http/https 协议头。"
-    },
-    {
-      "name": "content",
-      "label": "文本消息内容",
-      "type": "textarea",
-      "default": "【企业微信通知】测试文本消息\n如果你收到这条消息，说明文本通知链路已经打通。\n可在本框修改内容后重新点「发送测试消息」。",
-      "placeholder": "文本 / markdown 正文。markdown 支持 # 标题、**加粗**、> 引用、`代码`、<font color=\"info\">彩色</font>、[链接](url) 等子集语法。",
-      "help": "「发送消息」按钮按「消息类型」发送本框内容；「发送测试消息」会先检查本框与「卡片消息内容」，有哪个就发哪个、两个都有就都发（间隔 3 秒）。"
+      "placeholder": "https://example.com/detail（文本卡片 / 图文消息）",
+      "help": "textcard、图文消息 news、卡片通知 点击后的跳转地址，需带 http/https 协议头。textcard 必填；news 为空时回退为官方站点链接。"
     },
     {
       "name": "card_type",
@@ -104,11 +95,11 @@
     },
     {
       "name": "card_image",
-      "label": "卡片图片",
+      "label": "卡片图片（卡片通知 / 图文消息）",
       "type": "text",
       "default": "http://192.168.101.100:12366/static/brand_logo.png?v=18de0d2b37259200-5d57",
       "placeholder": "https://example.com/cover.jpg",
-      "help": "卡片主图。可填 http(s) 链接，也可填容器内已存在的本地图片路径。注意：企业微信服务器访问不到内网地址（如 192.168.x.x / 10.x.x.x / localhost），插件检测到这类地址时会先自行下载，再上传到企业微信换取可用的图片 URL，确保卡片能显示出图。建议尺寸 1068×455、格式 JPG/PNG、不超过 2 MB。"
+      "help": "卡片主图，「卡片通知」与「图文消息 news」都会使用它。可填 http(s) 链接，也可填容器内已存在的本地图片路径。注意：企业微信服务器访问不到内网地址（如 192.168.x.x / 10.x.x.x / localhost），插件检测到这类地址时会先自行下载，再上传到企业微信换取可用的图片 URL，确保能显示出图。建议尺寸 1068×455、格式 JPG/PNG、不超过 2 MB。"
     },
     {
       "name": "card_source",
@@ -133,14 +124,6 @@
       "default": "",
       "placeholder": "标题下方的一行说明",
       "help": "建议不超过 30 字，超出会被截断。"
-    },
-    {
-      "name": "card_content",
-      "label": "卡片消息内容",
-      "type": "textarea",
-      "default": "状态=测试成功\n类型=卡片通知\n说明=收到这张卡片说明通知链路已经打通\n提示=可在「卡片通知」页签调整卡片参数",
-      "placeholder": "两种写法任选：\n1) 直接粘贴企业微信原生 JSON（完整请求体，或只含 card_type 的卡片内容）；\n2) 每行一条「键=值」（最多 6 条），生成卡片的键值列表。",
-      "help": "两种写法任选：\n①【推荐】直接粘贴企业微信原生 JSON —— 可以是完整请求体（含 msgtype 与 template_card），也可以只是卡片本身（含 card_type）。此时内容会**原样**放进请求，不做键值解析、不截断，卡片参数以 JSON 为准（官方文档里的示例可直接粘贴）。\n② 键值列表：每行一条「键=值」（= : ： | 均可分隔），最多 6 条；整段没有键值格式时作为卡片的二级文本（≤112 字）。企业微信限制键 ≤5 字、值 ≤30 字，超出时插件会主动截断并在日志中说明。"
     },
     {
       "name": "card_aspect_ratio",
@@ -273,10 +256,7 @@
             {"type": "field", "name": "totag"},
             {"type": "field", "name": "safe"},
             {"type": "field", "name": "title"},
-            {"type": "field", "name": "url"},
-            {"type": "divider"},
-            {"type": "field", "name": "content", "style": {"size": "large"}},
-            {"type": "field", "name": "card_content", "style": {"size": "large"}}
+            {"type": "field", "name": "url"}
           ]},
           {"type": "card", "label": "卡片通知", "children": [
             {"type": "field", "name": "card_type"},
@@ -308,13 +288,13 @@
           ]}
         ]},
         {"type": "group", "style": {"span": 1}, "children": [
-          {"type": "button", "label": "发送消息", "action": "run", "params": {"func": "send"}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
-          {"type": "button", "label": "发送测试消息", "action": "run", "params": {"func": "test"}, "style": {"tone": "success", "size": "large", "variant": "soft"}},
+          {"type": "button", "label": "发送测试消息", "action": "run", "params": {"func": "test"}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
           {"type": "button", "label": "查看调用方法", "action": "run", "params": {"func": "docs"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
         ]}
       ]},
       {"type": "divider"},
-      {"type": "text", "text": "「发送测试消息」会检查「文本消息内容」与「卡片消息内容」：两个都填了就先发文本、间隔 3 秒再发卡片（两条通知），只填一个就只发一条，都没填会报错。「发送消息」按「消息类型」发送「文本消息内容」。卡片的图片、来源等参数在「卡片通知」页签；「查看调用方法」给出被其他插件调用的参数表、示例与在线文档链接。", "style": {"tone": "muted"}}
+      {"type": "text", "text": "微信能收到的消息类型：文本 text、图文消息 news、文本卡片 textcard；markdown 与卡片通知在微信里收不到（企业微信官方限制）。想「卡片效果 + 微信也能收到」请用「图文消息 news」——大图 + 标题 + 描述 + 点击跳转。", "style": {"tone": "muted"}},
+      {"type": "text", "text": "「发送测试消息」的内容已内置，无需填写：点击后会依次发出一条文本消息和一条卡片消息（间隔 3 秒），用来验证「配置 + 网络 + 收件人」整条链路。其中卡片那条按「消息类型」里选中的卡片类发送 —— 把类型选成「图文消息 news」就能直接验证微信是否收得到。卡片的图片、来源等参数在「卡片通知」页签（「卡片图片」对图文消息同样生效）；「查看调用方法」给出被其他插件调用的参数表、示例与在线文档链接。", "style": {"tone": "muted"}}
     ]
   }
 }

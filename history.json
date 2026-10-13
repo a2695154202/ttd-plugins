@@ -1,0 +1,76 @@
+{
+  "records": [
+    {
+      "time": "2026-10-14 00:09:56",
+      "msgtype": "text",
+      "recipient": "成员 zhangsan",
+      "status": "sent",
+      "msgid": "M1",
+      "error": "",
+      "invaliduser": ""
+    },
+    {
+      "time": "2026-10-14 00:09:56",
+      "msgtype": "news",
+      "recipient": "成员 zhangsan",
+      "status": "sent",
+      "msgid": "M1",
+      "error": "",
+      "invaliduser": ""
+    },
+    {
+      "time": "2026-10-14 00:09:56",
+      "msgtype": "text",
+      "recipient": "成员 zhangsan",
+      "status": "sent",
+      "msgid": "M1",
+      "error": "",
+      "invaliduser": ""
+    },
+    {
+      "time": "2026-10-14 00:09:56",
+      "msgtype": "textcard",
+      "recipient": "成员 zhangsan",
+      "status": "sent",
+      "msgid": "M1",
+      "error": "",
+      "invaliduser": ""
+    },
+    {
+      "time": "2026-10-14 00:09:56",
+      "msgtype": "text",
+      "recipient": "成员 zhangsan",
+      "status": "sent",
+      "msgid": "M1",
+      "error": "",
+      "invaliduser": ""
+    },
+    {
+      "time": "2026-10-14 00:09:56",
+      "msgtype": "template_card",
+      "recipient": "成员 zhangsan",
+      "status": "sent",
+      "msgid": "M1",
+      "error": "",
+      "invaliduser": ""
+    },
+    {
+      "time": "2026-10-14 00:09:56",
+      "msgtype": "text",
+      "recipient": "成员 zhangsan",
+      "status": "sent",
+      "msgid": "M1",
+      "error": "",
+      "invaliduser": ""
+    },
+    {
+      "time": "2026-10-14 00:09:56",
+      "msgtype": "template_card",
+      "recipient": "成员 zhangsan",
+      "status": "sent",
+      "msgid": "M1",
+      "error": "",
+      "invaliduser": ""
+    }
+  ]
+}

@@ -81,11 +81,11 @@ def notify_via_wecom(content, title="TgtoDrive 通知"):
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
-| `func` | string | `send` 发送 / `test` 测试 / `config` 自检 / `users` 查成员 / `history` 查历史 / `docs` 查看调用方法。`test` 会按 `content` 与 `card_content` 依次发送（都有内容时中间间隔 3 秒） |
-| `msgtype` | string | `text` / `markdown` / `textcard` / `template_card`（卡片通知） |
+| `func` | string | `send` 发送（**正式发送，需自行传 `content`**）/ `test` 测试（内容可省略，省略时用插件内置的测试内容）/ `config` 自检 / `history` 查历史 / `docs` 查看调用方法。<br>**注意**：界面上的「执行功能」下拉框只有 `test` / `config` / `history` / `docs`；`send` 只在接口层开放，`users`（查成员）功能已移除 |
+| `msgtype` | string | `text` / `news`（图文消息，**微信可收**）/ `textcard`（**微信可收**）/ `markdown`（微信收不到）/ `template_card`（卡片通知，微信收不到） |
 | `touser` | string | 成员 UserID，多个用 `\|` 分隔；`@all` 表示该应用全体可见成员 |
 | `toparty` / `totag` | string | 部门 ID / 标签 ID，`touser` 为 `@all` 时被忽略 |
-| `content` | string | 正文；`text`/`markdown` 上限 2048 字节，超出按 `split_long` 分段 |
+| `content` | string | 正文；`text`/`markdown` 上限 2048 字节，超出按 `split_long` 分段。**界面没有这个输入框**：`func=send` 时必传，`func=test` 时可省略（用内置测试文本） |
 | `safe` | bool | 仅 `text` / `markdown` 支持，`true` 时不可分享并带水印 |
 | `title` | string | 卡片标题（`textcard`、`template_card`） |
 | `url` | string | 卡片跳转链接（`textcard` 必填；`template_card` 的 `card_action` 必填，留空会回退官方站点） |
@@ -94,7 +94,7 @@ def notify_via_wecom(content, title="TgtoDrive 通知"):
 | `card_source` | string | 卡片来源名称，例如「站点 1PTBA 消息」 |
 | `card_source_icon` | string | 来源图标 URL |
 | `card_sub_title` | string | 卡片副标题（≤30 字） |
-| `card_content` | string | 卡片消息内容。**优先识别企业微信原生 JSON**：含 `template_card` 或 `card_type` 时原样放进请求体（不解析、不截断）；否则按每行一条 `键=值`（最多 6 条）生成键值列表，整段不是键值格式时作为卡片正文（≤112 字）。兼容旧字段名 `card_items` |
+| `card_content` | string | 卡片类消息的内容。**优先识别企业微信原生 JSON**：含 `template_card` / `card_type` / `articles` / `news` 时按类型处理（模板卡片与图文 JSON 原样放进请求体，不解析、不截断）；`msgtype=news` 且内容是模板卡片 JSON 时，会**自动提取标题 / 描述 / 键值 / 链接 / 图片转成图文**；否则按每行一条 `键=值`（最多 6 条）生成键值列表。兼容旧字段名 `card_items`。**界面没有这个输入框**：`func=test` 时可省略（用内置测试卡片内容） |
 | `card_aspect_ratio` | number | 图片比例 1.3–2.25，默认 2.25 |
 | `split_long` | bool | 超长正文是否自动分段，默认 `true` |
 | `channel_name` / `corp_id` / `agent_id` / `corp_secret` / `api_base` / `token` / `encoding_aes_key` / `admin_users` / `history_days` / `tgto_base_url` / `tgto_token` | — | 配置类字段，**一般不必传**，沿用用户已保存的设置 |
@@ -197,7 +197,33 @@ def notify_and_wait(content, timeout=60):
  "content": "## 下载完成\n> 影片：**示例影片**\n> 时间：2026-10-13 18:04"}
 ```
 
-### 3. 带图卡片通知（对应 text_notice 样式）
+### 3. 图文消息通知（带图，**微信也能收到**）
+
+微信插件**不支持模板卡片**，要保证微信里也收到，就用 `news`：
+
+```json
+{
+  "func": "send",
+  "msgtype": "news",
+  "touser": "CaiShenYeDeXinTouBao",
+  "title": "订单服务可用率告警",
+  "content": "2026-10-13 23:05 触发\n当前可用率：92.4%",
+  "url": "https://grafana.example.com/d/order",
+  "card_image": "https://example.com/cover.jpg"
+}
+```
+
+也可以直接把**模板卡片 JSON** 塞进 `card_content`，插件会自动转成图文：
+
+```json
+{
+  "func": "send",
+  "msgtype": "news",
+  "card_content": "{\"card_type\": \"text_notice\", \"main_title\": {\"title\": \"告警\"}, \"card_action\": {\"type\": 1, \"url\": \"https://example.com\"}}"
+}
+```
+
+### 4. 带图卡片通知（对应 text_notice 样式，**仅企业微信可收**）
 
 ```python
 {
@@ -212,7 +238,7 @@ def notify_and_wait(content, timeout=60):
 }
 ```
 
-### 4. 用容器内的本地图片当卡片图
+### 5. 用容器内的本地图片当卡片图
 
 ```python
 {"func": "send", "msgtype": "template_card", "title": "本地封面",
@@ -233,25 +259,26 @@ def notify_and_wait(content, timeout=60):
 
 上传失败时会退回使用原地址并给出警告（此时卡片上的图片可能显示不出来）。
 
-### 5. 内容驱动的一键测试
+### 6. 一键测试（内容可省略）
+
+最简形式 —— 什么都不传，用插件内置的测试内容：
+
+```python
+{"func": "test"}
+```
+
+`test` 固定发送**两条**通知：先发内置文本消息，**间隔 3 秒**再发内置卡片消息
+（卡片按 `msgtype` 选中的卡片类发送；选 `news` 就是图文，便于验证微信能否收到）。
+
+需要自定义内容时传 `content` / `card_content` 覆盖对应的内置内容：
 
 ```python
 {"func": "test",
- "content": "文本测试内容",
- "card_content": "状态=测试成功\n类型=卡片通知"}
+ "content": "自定义文本",
+ "card_content": "状态=自定义\n类型=卡片"}
 ```
 
-`test` 会检查 `content` 与 `card_content` 两个内容框：
-
-- 两个都有内容 → 先发文本消息，**间隔 3 秒**再发卡片消息（共两条通知）；
-- 只有一个有内容 → 只发这一条；
-- 两个都为空 → 报错 `「文本消息内容」与「卡片消息内容」都为空`。
-
-单条测试：
-
-```python
-{"func": "test", "content": "只测文本"}
-```
+只覆盖其中一个时，另一个仍用内置内容。
 
 ---
 

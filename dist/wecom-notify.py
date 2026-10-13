@@ -16,23 +16,15 @@ PLUGIN_MANIFEST = {
       'name': 'func',
       'label': '执行功能',
       'type': 'select',
-      'default': 'send',
+      'default': 'test',
       'options': [
         {
-          'label': '发送消息（按下方内容）',
-          'value': 'send',
-        },
-        {
-          'label': '发送测试消息（按两个内容框发送）',
+          'label': '发送测试消息（内置内容，文本 + 卡片各一条）',
           'value': 'test',
         },
         {
           'label': '检查配置（获取 access_token）',
           'value': 'config',
-        },
-        {
-          'label': '查询应用可见范围成员',
-          'value': 'users',
         },
         {
           'label': '查看发送历史（本地记录）',
@@ -43,7 +35,7 @@ PLUGIN_MANIFEST = {
           'value': 'docs',
         },
       ],
-      'help': '顶部右侧「发送消息」按「消息类型」发送「文本消息内容」；「发送测试消息」会先检查两个内容框 —— 都有内容就依次发送（间隔 3 秒），只有一条就只发一条，都没有则报错。',
+      'help': '「发送测试消息」的文本与卡片内容已内置在插件里，无需填写：点击后会依次发出一条文本消息和一条卡片消息（间隔 3 秒），用来验证「配置 + 网络 + 收件人」整条链路。\n\n本插件还向其它插件提供「发送消息（send）」能力，但那需要传入正文参数，因此只在接口层开放，不在本界面出现 —— 用法见「查看调用方法」或仓库里的 CALLING.md。',
     },
     {
       'name': 'msgtype',
@@ -56,19 +48,23 @@ PLUGIN_MANIFEST = {
           'value': 'text',
         },
         {
-          'label': 'markdown（微信可收，排版更好看）',
-          'value': 'markdown',
+          'label': '图文消息 news（微信可收、带图，推荐）',
+          'value': 'news',
         },
         {
           'label': '文本卡片 textcard（微信可收，带标题与跳转按钮）',
           'value': 'textcard',
         },
         {
+          'label': 'markdown（仅企业微信可收，微信收不到）',
+          'value': 'markdown',
+        },
+        {
           'label': '卡片通知 template_card（仅企业微信可收，微信收不到）',
           'value': 'template_card',
         },
       ],
-      'help': 'text 与 markdown 正文上限 2048 字节（约 680 个汉字），超出会按「超长消息自动分段」处理；textcard 需要同时填「卡片标题」；选「卡片通知」时请到「卡片通知」页签填写卡片参数。\n\n⚠ 微信接收范围：企业微信官方明确「微信插件不支持接收模板卡片消息」—— 文本 / markdown / 文本卡片都可以在微信收到，而「卡片通知」（template_card）**只会在企业微信客户端出现，微信里一定收不到**，这与收件人权限无关。需要微信也能收到时，请选用前三种类型。',
+      'help': '【微信可收性】这是企业微信的官方限制，与收件人配置无关：\n• 微信可以收到：文本 text、图文消息 news、文本卡片 textcard；\n• 微信收不到：markdown（文档明确「微工作台（原企业号）不支持展示 markdown 消息」）、卡片通知 template_card（官方技术支持明确「微信插件不支持接收模板卡片消息」）。\n所以想「既有卡片效果、微信又能收到」时，请用「图文消息 news」——大图 + 标题 + 描述 + 点击跳转，是微信里最接近卡片的形态。\n\n【长度限制】text / markdown 正文上限 2048 字节（约 680 汉字），超出按「超长消息自动分段」处理；news 标题 ≤128 字节、描述 ≤512 字节；textcard 与 news 需要「卡片标题」；「卡片图片」对 news 同样生效。\n\n【若微信可收的类型仍收不到】请检查管理后台该应用是否勾选了「在微工作台中始终进入主页」——勾选后应用在微信端只能收到文本消息，其他类型会被转换成「到企业微信查看」的提示。',
     },
     {
       'name': 'touser',
@@ -103,27 +99,19 @@ PLUGIN_MANIFEST = {
     },
     {
       'name': 'title',
-      'label': '卡片标题',
+      'label': '文本卡片（不填时用内置测试标题）',
       'type': 'text',
       'default': '',
-      'placeholder': '仅文本卡片消息需要',
-      'help': '消息类型选择 textcard 时必填，128 字节以内。',
+      'placeholder': '文本卡片 / 图文消息 / 卡片通知 的标题',
+      'help': '作为 textcard、图文消息 news、卡片通知的标题。textcard 必填（128 字节以内）；news 不填时自动用「渠道名称 + 通知」占位。',
     },
     {
       'name': 'url',
       'label': '卡片跳转链接',
       'type': 'text',
       'default': '',
-      'placeholder': 'https://example.com/detail（仅文本卡片消息）',
-      'help': '消息类型选择 textcard 时的点击跳转地址，需带 http/https 协议头。',
-    },
-    {
-      'name': 'content',
-      'label': '文本消息内容',
-      'type': 'textarea',
-      'default': '【企业微信通知】测试文本消息\n如果你收到这条消息，说明文本通知链路已经打通。\n可在本框修改内容后重新点「发送测试消息」。',
-      'placeholder': '文本 / markdown 正文。markdown 支持 # 标题、**加粗**、> 引用、`代码`、<font color="info">彩色</font>、[链接](url) 等子集语法。',
-      'help': '「发送消息」按钮按「消息类型」发送本框内容；「发送测试消息」会先检查本框与「卡片消息内容」，有哪个就发哪个、两个都有就都发（间隔 3 秒）。',
+      'placeholder': 'https://example.com/detail（文本卡片 / 图文消息）',
+      'help': 'textcard、图文消息 news、卡片通知 点击后的跳转地址，需带 http/https 协议头。textcard 必填；news 为空时回退为官方站点链接。',
     },
     {
       'name': 'card_type',
@@ -144,11 +132,11 @@ PLUGIN_MANIFEST = {
     },
     {
       'name': 'card_image',
-      'label': '卡片图片',
+      'label': '卡片图片（卡片通知 / 图文消息）',
       'type': 'text',
       'default': 'http://192.168.101.100:12366/static/brand_logo.png?v=18de0d2b37259200-5d57',
       'placeholder': 'https://example.com/cover.jpg',
-      'help': '卡片主图。可填 http(s) 链接，也可填容器内已存在的本地图片路径。注意：企业微信服务器访问不到内网地址（如 192.168.x.x / 10.x.x.x / localhost），插件检测到这类地址时会先自行下载，再上传到企业微信换取可用的图片 URL，确保卡片能显示出图。建议尺寸 1068×455、格式 JPG/PNG、不超过 2 MB。',
+      'help': '卡片主图，「卡片通知」与「图文消息 news」都会使用它。可填 http(s) 链接，也可填容器内已存在的本地图片路径。注意：企业微信服务器访问不到内网地址（如 192.168.x.x / 10.x.x.x / localhost），插件检测到这类地址时会先自行下载，再上传到企业微信换取可用的图片 URL，确保能显示出图。建议尺寸 1068×455、格式 JPG/PNG、不超过 2 MB。',
     },
     {
       'name': 'card_source',
@@ -173,14 +161,6 @@ PLUGIN_MANIFEST = {
       'default': '',
       'placeholder': '标题下方的一行说明',
       'help': '建议不超过 30 字，超出会被截断。',
-    },
-    {
-      'name': 'card_content',
-      'label': '卡片消息内容',
-      'type': 'textarea',
-      'default': '状态=测试成功\n类型=卡片通知\n说明=收到这张卡片说明通知链路已经打通\n提示=可在「卡片通知」页签调整卡片参数',
-      'placeholder': '两种写法任选：\n1) 直接粘贴企业微信原生 JSON（完整请求体，或只含 card_type 的卡片内容）；\n2) 每行一条「键=值」（最多 6 条），生成卡片的键值列表。',
-      'help': '两种写法任选：\n①【推荐】直接粘贴企业微信原生 JSON —— 可以是完整请求体（含 msgtype 与 template_card），也可以只是卡片本身（含 card_type）。此时内容会**原样**放进请求，不做键值解析、不截断，卡片参数以 JSON 为准（官方文档里的示例可直接粘贴）。\n② 键值列表：每行一条「键=值」（= : ： | 均可分隔），最多 6 条；整段没有键值格式时作为卡片的二级文本（≤112 字）。企业微信限制键 ≤5 字、值 ≤30 字，超出时插件会主动截断并在日志中说明。',
     },
     {
       'name': 'card_aspect_ratio',
@@ -364,23 +344,6 @@ PLUGIN_MANIFEST = {
                     'type': 'field',
                     'name': 'url',
                   },
-                  {
-                    'type': 'divider',
-                  },
-                  {
-                    'type': 'field',
-                    'name': 'content',
-                    'style': {
-                      'size': 'large',
-                    },
-                  },
-                  {
-                    'type': 'field',
-                    'name': 'card_content',
-                    'style': {
-                      'size': 'large',
-                    },
-                  },
                 ],
               },
               {
@@ -506,28 +469,15 @@ PLUGIN_MANIFEST = {
             'children': [
               {
                 'type': 'button',
-                'label': '发送消息',
-                'action': 'run',
-                'params': {
-                  'func': 'send',
-                },
-                'style': {
-                  'tone': 'primary',
-                  'size': 'large',
-                  'variant': 'solid',
-                },
-              },
-              {
-                'type': 'button',
                 'label': '发送测试消息',
                 'action': 'run',
                 'params': {
                   'func': 'test',
                 },
                 'style': {
-                  'tone': 'success',
+                  'tone': 'primary',
                   'size': 'large',
-                  'variant': 'soft',
+                  'variant': 'solid',
                 },
               },
               {
@@ -552,7 +502,14 @@ PLUGIN_MANIFEST = {
       },
       {
         'type': 'text',
-        'text': '「发送测试消息」会检查「文本消息内容」与「卡片消息内容」：两个都填了就先发文本、间隔 3 秒再发卡片（两条通知），只填一个就只发一条，都没填会报错。「发送消息」按「消息类型」发送「文本消息内容」。卡片的图片、来源等参数在「卡片通知」页签；「查看调用方法」给出被其他插件调用的参数表、示例与在线文档链接。',
+        'text': '微信能收到的消息类型：文本 text、图文消息 news、文本卡片 textcard；markdown 与卡片通知在微信里收不到（企业微信官方限制）。想「卡片效果 + 微信也能收到」请用「图文消息 news」——大图 + 标题 + 描述 + 点击跳转。',
+        'style': {
+          'tone': 'muted',
+        },
+      },
+      {
+        'type': 'text',
+        'text': '「发送测试消息」的内容已内置，无需填写：点击后会依次发出一条文本消息和一条卡片消息（间隔 3 秒），用来验证「配置 + 网络 + 收件人」整条链路。其中卡片那条按「消息类型」里选中的卡片类发送 —— 把类型选成「图文消息 news」就能直接验证微信是否收得到。卡片的图片、来源等参数在「卡片通知」页签（「卡片图片」对图文消息同样生效）；「查看调用方法」给出被其他插件调用的参数表、示例与在线文档链接。',
         'style': {
           'tone': 'muted',
         },
@@ -570,19 +527,29 @@ PLUGIN_MANIFEST = {
 `GET /cgi-bin/gettoken` 与 `POST /cgi-bin/message/send`。
 
 能力
-  * 发送消息：文本 / markdown / 文本卡片 / **卡片通知（模板卡片）** 四种类型，
-    支持发给成员、部门、标签或 @all。
+  * 发送消息：文本 / **图文消息 news** / markdown / 文本卡片 / **卡片通知（模板卡片）**
+    五种类型，支持发给成员、部门、标签或 @all。
+  * **微信可收性**（企业微信官方限制）：微信插件能收到 文本 / 图文消息 / 文本卡片；
+    markdown 与模板卡片**收不到**。因此需要微信也收到、又要卡片效果时用「图文消息」——
+    大图 + 标题 + 描述 + 点击跳转；把消息类型从「卡片通知」改成「图文消息」时，
+    原卡片 JSON 会被**自动转换成图文**，无需重写内容。
   * **卡片通知**：支持带图（图片 URL，或容器内本地图片自动上传换取 URL）、
     来源名称与图标、键值列表（最多 6 条）、点击跳转链接；
     可选文本通知型 text_notice 与图文展示型 news_notice。
-  * 发送测试消息（界面顶部独立按钮）：按「文本消息内容」与「卡片消息内容」两个
-    输入框自动决定发送条数 —— 两个都有内容就依次发送（间隔 3 秒，共两条通知），
-    只有一条就只发一条，都没有则报错。
+  * 发送测试消息（界面顶部独立按钮）：测试文本与测试卡片内容已内置在插件里，
+    界面不再提供内容输入框 —— 点击后会依次发出一条文本消息和一条卡片消息
+    （间隔 3 秒），用来验证「配置 + 网络 + 收件人」整条链路；卡片那条按「消息类型」
+    里选中的卡片类发送（选「图文消息 news」即可直接验证微信是否收得到）。
   * 检查配置：校验必填项格式并真实获取一次 access_token，给出剩余有效期。
-  * 查询应用可见范围成员：拉取部门与成员列表，便于填写 UserID。
   * 查看发送历史：本地记录每次发送的类型、收件人、结果与错误码。
   * **查看调用方法**：输出「被其他插件调用」的参数表与示例，
     并给出仓库内 CALLING.md 的在线链接。
+
+界面取舍
+  * 「执行功能」下拉框只有 发送测试消息 / 检查配置 / 查看发送历史 / 查看调用方法；
+    **「发送消息（send）」与「查询应用可见范围成员（users）」不在界面上** ——
+    send 需要调用方传入正文，只在接口层开放；users 已移除。
+  * 顶部两个按钮：发送测试消息、查看调用方法。
 
 被其他插件调用
   * 入口：`POST {TGTO_OPENAPI_BASE_URL}/api/toolbox/plugins/wecom-notify/run`
@@ -662,23 +629,39 @@ TOKEN_FILE = "token.json"
 HISTORY_FILE = "history.json"
 HISTORY_MAX_RECORDS = 500
 
+# 界面上只提供 FUNC_UI 里的功能；``send`` 不出现在「执行功能」下拉框中，
+# 仅供其它插件通过 OpenAPI 调用（药丸签到等通知方走的就是这条路径）。
 FUNC_LABELS = {
-    "send": "发送消息",
+    "send": "发送消息（供其他插件调用）",
     "test": "发送测试消息",
     "config": "检查配置",
-    "users": "查询应用可见范围成员",
     "history": "查看发送历史",
     "docs": "查看调用方法",
 }
 VALID_FUNCS = tuple(FUNC_LABELS)
+FUNC_UI = ("test", "config", "history", "docs")
 
 MSGTYPE_LABELS = {
     "text": "文本",
     "markdown": "markdown",
     "textcard": "文本卡片",
+    "news": "图文消息",
     "template_card": "卡片通知（模板卡片）",
 }
 VALID_MSGTYPES = tuple(MSGTYPE_LABELS)
+
+# 微信插件（原企业号 / 微工作台）能真正收到的消息类型。
+# 依据：企业微信文档中「微工作台（原企业号）不支持展示 markdown 消息」
+# 「微工作台（原企业号）不支持展示模板卡片消息」，以及官方技术支持明确答复
+# 「微信插件不支持接收模板卡片消息」「小程序应用消息也无法在微信插件接收」。
+WECHAT_OK = frozenset({"text", "textcard", "news"})
+WECHAT_NO = frozenset({"markdown", "template_card"})
+
+# 图文消息（news）的企业微信侧限制
+NEWS_MAX_ARTICLES = 8
+NEWS_TITLE_LIMIT = 60      # 企业微信按字节限 128，中文按字符取保守值
+NEWS_DESC_LIMIT = 160      # 企业微信按字节限 512
+NEWS_IMAGE_SPEC = "大图建议 1068×455，小图建议 150×150，JPG / PNG"
 
 CARD_TYPE_LABELS = {
     "text_notice": "文本通知型 text_notice（大图 + 键值列表）",
@@ -736,6 +719,24 @@ CORP_ID_RE = re.compile(r"^w[a-z0-9]{10,}$", re.IGNORECASE)
 # 「发送测试消息」同时发送文本与卡片时，两条之间的间隔（秒）。
 # 这是同一个任务内的发送间隔，不是等待下次执行，符合插件协议。
 TEST_SEND_GAP_SECONDS = 3
+
+# 「发送测试消息」的内容已内置（界面上不再提供内容输入框）。
+# 占位符 {now} / {channel} / {api_base} 会在发送前替换。
+# 其他插件通过 OpenAPI 调用时可传 content / card_content 覆盖内置内容。
+DEFAULT_TEST_TEXT = (
+    "【企业微信通知】测试文本消息\n"
+    "如果你收到这条消息，说明 TgtoDrive 的企业微信文本通知链路已经打通。\n"
+    "时间：{now}\n"
+    "渠道：{channel}\n"
+    "接口：{api_base}"
+)
+
+DEFAULT_TEST_CARD = (
+    "状态=测试成功\n"
+    "渠道={channel}\n"
+    "时间={now}\n"
+    "提示=收到这张卡片，说明带图通知链路已打通"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1001,12 +1002,14 @@ def _clip(text, limit):
 def _parse_native_card_json(text):
     """尝试把「卡片消息内容」当作企业微信**原生 JSON** 解析。
 
-    支持两种写法，便于从官方文档直接粘贴，不必改写成「键=值」：
+    支持四种写法，便于从官方文档直接粘贴，不必改写成「键=值」：
 
-    * 完整请求体：``{"msgtype": "template_card", "template_card": {...}}``
-    * 仅卡片本身：``{"card_type": "text_notice", ...}``
+    * 完整请求体（模板卡片）：``{"msgtype": "template_card", "template_card": {...}}``
+    * 完整请求体（图文消息）：``{"msgtype": "news", "news": {"articles": [...]}}``
+    * 仅模板卡片本身：``{"card_type": "text_notice", ...}``
+    * 仅图文内容本身：``{"articles": [...]}``
 
-    返回 ``(kind, obj)``：``kind`` 为 ``"body"``（完整请求体）或 ``"card"``（卡片内容）；
+    返回 ``(kind, obj)``：``kind`` 为 ``"body"`` / ``"card"`` / ``"news"`` / ``"articles"``；
     当内容不是以 ``{`` 开头的 JSON 对象时返回 ``(None, None)``，交回「键=值」解析。
     """
     text = str(text or "").strip()
@@ -1020,8 +1023,12 @@ def _parse_native_card_json(text):
         return None, None
     if isinstance(obj.get("template_card"), dict):
         return "body", obj
+    if isinstance(obj.get("news"), dict):
+        return "news", obj
     if "card_type" in obj:
         return "card", obj
+    if isinstance(obj.get("articles"), list):
+        return "articles", obj
     return None, None
 
 
@@ -1059,6 +1066,85 @@ def _parse_card_items(text, limit=CARD_ITEMS_MAX):
                          % (short_key, CARD_VALUE_LIMIT))
         items.append({"keyname": short_key, "value": short_value})
     return items, notes
+
+
+def _kv_to_lines(text):
+    """把「键=值」多行文本转成「键：值」多行文本，供图文消息的描述使用。
+
+    与 :func:`_parse_card_items` 的区别：不做键 ≤5 字 / 值 ≤30 字的截断
+    （那是模板卡片的限制），图文消息的描述是自由文本。
+    """
+    lines = []
+    for raw_line in str(text or "").replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = re.split(r"\s*[=：:]\s*|\s*\|\s*", line, maxsplit=1)
+        if len(parts) == 2 and parts[0].strip():
+            lines.append("%s：%s" % (parts[0].strip(), parts[1].strip()))
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _template_card_to_news(card):
+    """把模板卡片结构降级成图文消息（news）。
+
+    用途：模板卡片在企业微信里好看，但**微信插件收不到**。当用户把「消息类型」
+    改成「图文消息 news」时，直接把原卡片 JSON 里的标题、描述、键值列表、跳转链接
+    与图片提取出来组成图文，就不必重写内容。
+
+    返回 ``{"articles": [article]}``，无法提取出任何内容时返回 ``None``。
+    """
+    if not isinstance(card, dict):
+        return None
+
+    title = ""
+    descs = []
+
+    main = card.get("main_title")
+    if isinstance(main, dict):
+        title = str(main.get("title") or "")
+        if main.get("desc"):
+            descs.append(str(main["desc"]))
+    if not title:
+        source = card.get("source")
+        if isinstance(source, dict) and source.get("desc"):
+            title = str(source["desc"])
+
+    emphasis = card.get("emphasis_content")
+    if isinstance(emphasis, dict):
+        pair = "：".join(str(emphasis.get(k)) for k in ("title", "desc") if emphasis.get(k))
+        if pair:
+            descs.append(pair)
+
+    if card.get("sub_title_text"):
+        descs.append(str(card["sub_title_text"]))
+
+    for item in card.get("horizontal_content_list") or []:
+        if isinstance(item, dict) and item.get("keyname"):
+            descs.append("%s：%s" % (item["keyname"], item.get("value", "")))
+
+    for item in card.get("vertical_content_list") or []:
+        if isinstance(item, dict) and (item.get("title") or item.get("desc")):
+            descs.append("：".join(str(item.get(k)) for k in ("title", "desc") if item.get(k)))
+
+    if not (title or descs):
+        return None
+
+    article = {"title": title or "通知"}
+    if descs:
+        article["description"] = "\n".join(descs)
+
+    action = card.get("card_action")
+    if isinstance(action, dict) and action.get("url"):
+        article["url"] = str(action["url"])
+
+    image = card.get("card_image")
+    if isinstance(image, dict) and image.get("url"):
+        article["picurl"] = str(image["url"])
+
+    return {"articles": [article]}
 
 
 def _looks_like_url(value):
@@ -1475,45 +1561,6 @@ class _WecomClient(object):
 
     # -- 通讯录 ------------------------------------------------------------
 
-    def department_list(self):
-        """获取部门列表，返回 ``(list, error)``。"""
-        token, error = self.get_token()
-        if error:
-            return None, error
-        status, text, data, error = _http_request(
-            "GET", self.url("/cgi-bin/department/list"), params={"access_token": token},
-            use_proxy=self.use_proxy,
-        )
-        if error:
-            return None, "请求 department/list 失败：%s" % error
-        if not isinstance(data, dict):
-            return None, "department/list 返回非 JSON（HTTP %s）：%s" % (status, (text or "")[:200])
-        if data.get("errcode") not in (0, None):
-            return None, self.describe_error(data.get("errcode"), data.get("errmsg", ""),
-                                             stage="department/list")
-        departments = data.get("department")
-        return (departments if isinstance(departments, list) else []), None
-
-    def user_simplelist(self, department_id):
-        """获取指定部门的成员，返回 ``(list, error)``。"""
-        token, error = self.get_token()
-        if error:
-            return None, error
-        status, text, data, error = _http_request(
-            "GET", self.url("/cgi-bin/user/simplelist"),
-            params={"access_token": token, "department_id": department_id},
-            use_proxy=self.use_proxy,
-        )
-        if error:
-            return None, "请求 user/simplelist 失败：%s" % error
-        if not isinstance(data, dict):
-            return None, "user/simplelist 返回非 JSON（HTTP %s）：%s" % (status, (text or "")[:200])
-        if data.get("errcode") not in (0, None):
-            return None, self.describe_error(data.get("errcode"), data.get("errmsg", ""),
-                                             stage="user/simplelist")
-        users = data.get("userlist")
-        return (users if isinstance(users, list) else []), None
-
     def visible_members(self):
         """读取应用可见范围内的成员（根部门 + 子部门），返回 ``(list, error)``。"""
         token, error = self.get_token()
@@ -1765,6 +1812,8 @@ class _NotifyRunner(object):
         self._delivery_note = ""
         self._recipients = None
         self._invalid_users = []
+        # 本次执行实际发送过的消息类型（测试消息会发多条，用于生成准确的微信可收性提示）
+        self._sent_kinds = []
 
         self.touser = _s(self.params, "touser")
         self.toparty = _s(self.params, "toparty")
@@ -1838,6 +1887,14 @@ class _NotifyRunner(object):
         if not self.url:
             raise ValueError("消息类型为「文本卡片」时必须填写「卡片跳转链接」")
 
+    def validate_news(self):
+        """图文消息至少要有一项内容，避免发出一张空白卡片。"""
+        if self.title or self.content or self.card_content or self.card_image:
+            return
+        raise ValueError(
+            "消息类型为「图文消息」时，至少需要填写「卡片标题」「消息内容」"
+            "「卡片消息内容」或「卡片图片」中的一项")
+
     def validate_encoding_key(self):
         """EncodingAESKey 只做格式提示，不阻塞流程。"""
         if self.encoding_aes_key and not AES_KEY_RE.match(self.encoding_aes_key):
@@ -1906,13 +1963,16 @@ class _NotifyRunner(object):
         self.log.info("内网图片已搬运到企业微信，卡片将使用该 URL")
         return new_url
 
-    def _resolve_card_image(self):
-        """确定卡片图片 URL。
+    def _resolve_card_image(self, value=None):
+        """确定图片 URL。
 
         规则：容器内本地文件 → 上传；内网 http(s) 地址（企业微信服务器访问不到）
         → 先下载再上传换取可用 URL；公网 http(s) 地址 → 直接使用。
+
+        ``value`` 为 None 时取「卡片图片」设置；也可显式传入其它来源的图片地址
+        （例如从模板卡片 JSON 里提取出的 picurl）。
         """
-        value = self.card_image
+        value = self.card_image if value is None else value
         if not value:
             return ""
         if _looks_like_url(value):
@@ -2010,6 +2070,52 @@ class _NotifyRunner(object):
         card["card_action"] = {"type": 1, "url": action_url}
         return card
 
+    def build_news(self, content_override=None):
+        """组装图文消息（news）。
+
+        news 是**企业微信客户端与微信插件都能收到**、且**带图**的类型 ——
+        在不支持模板卡片的微信里，它是最接近「带图卡片」的形态：
+        大图 + 标题 + 描述 + 点击跳转。
+        """
+        title = self.title or ("【%s】通知" % self.channel_name)
+        body = self.content if content_override is None else content_override
+        if not body:
+            # 「消息内容」为空时，允许用「卡片消息内容」的「键=值」列表作描述
+            body = _kv_to_lines(self.card_content)
+            if body:
+                self.log.info("「消息内容」为空，已用「卡片消息内容」作为图文描述")
+
+        article = {}
+        short_title, title_cut = _clip(title, NEWS_TITLE_LIMIT)
+        article["title"] = short_title
+        if title_cut:
+            self.log.warn("图文标题超过 %d 字，已截断（企业微信侧按 128 字节截断）"
+                          % NEWS_TITLE_LIMIT)
+
+        if body:
+            short_body, body_cut = _clip(body, NEWS_DESC_LIMIT)
+            article["description"] = short_body
+            if body_cut:
+                self.log.warn("图文描述超过 %d 字，已截断（企业微信侧按 512 字节截断）；"
+                              "完整内容可放到「卡片跳转链接」指向的页面"
+                              % NEWS_DESC_LIMIT)
+
+        url = self.url
+        if not url:
+            url = CARD_DEFAULT_ACTION_URL
+            self.log.warn("图文消息的 url 为空，已回退为 %s（企业微信要求 url 与小程序二选一）"
+                          % CARD_DEFAULT_ACTION_URL)
+        article["url"] = url
+
+        image_url = self._resolve_card_image()
+        if image_url:
+            article["picurl"] = image_url
+            self.log.info("图文消息已附带图片（%s）" % NEWS_IMAGE_SPEC)
+        else:
+            self.log.info("图文消息未带图（「卡片图片」为空或上传失败），仍会正常发送")
+
+        return {"articles": [article]}
+
     def build_payload(self, content_override=None):
         """按当前设置组装一条 message/send 请求体。"""
         try:
@@ -2044,6 +2150,11 @@ class _NotifyRunner(object):
             }
         elif self.msgtype == "template_card":
             kind, native = _parse_native_card_json(self.card_content)
+            if kind in ("news", "articles"):
+                raise ValueError(
+                    "「卡片消息内容」里是**图文消息** JSON，但「消息类型」选的是「卡片通知」。"
+                    "请把「消息类型」改为「图文消息 news」，或把内容换成模板卡片 JSON"
+                    "（含 card_type 的对象）。")
             if kind == "card":
                 self.log.info("「卡片消息内容」识别为企业微信原生 template_card JSON，直接使用"
                               "（不再按「键=值」解析）")
@@ -2058,6 +2169,40 @@ class _NotifyRunner(object):
                 payload = merged
             else:
                 payload["template_card"] = self.build_template_card(content)
+        elif self.msgtype == "news":
+            kind, native = _parse_native_card_json(self.card_content)
+            if kind == "news":
+                self.log.info("「卡片消息内容」识别为完整的企业微信请求体 JSON（含 news），直接使用")
+                merged = dict(native)
+                merged.setdefault("msgtype", "news")
+                for key in ("touser", "toparty", "totag", "agentid"):
+                    if key in payload:
+                        merged.setdefault(key, payload[key])
+                payload = merged
+            elif kind == "articles":
+                self.log.info("「卡片消息内容」识别为图文消息 JSON（articles），直接使用")
+                payload["news"] = native
+            elif kind in ("card", "body"):
+                # 用户多半是从「卡片通知」切过来的：原卡片 JSON 不必重写，
+                # 自动提取标题 / 描述 / 键值 / 链接 / 图片，降级成图文消息。
+                card = native.get("template_card") if kind == "body" else native
+                converted = _template_card_to_news(card)
+                if converted is None:
+                    raise ValueError(
+                        "「卡片消息内容」是模板卡片 JSON，但未能从中提取出标题或内容。"
+                        "请至少填写 main_title.title、sub_title_text 或 "
+                        "horizontal_content_list 中的一项，或改用「键=值」写法。")
+                article = converted["articles"][0]
+                picurl = article.pop("picurl", "")
+                if picurl:
+                    resolved = self._resolve_card_image(picurl)
+                    if resolved:
+                        article["picurl"] = resolved
+                self.log.info("「卡片消息内容」是模板卡片 JSON，已自动转换为图文消息 news "
+                              "（微信插件不支持模板卡片，转换后微信可以收到）")
+                payload["news"] = converted
+            else:
+                payload["news"] = self.build_news(content)
         else:
             raise ValueError("不支持的「消息类型」：%s" % self.msgtype)
 
@@ -2075,13 +2220,15 @@ class _NotifyRunner(object):
             content = content_override or ""
         else:
             content = self.content
-            if not content and self.msgtype != "template_card":
+            if not content and self.msgtype not in ("template_card", "news"):
                 raise ValueError("「消息内容」为空，请填写后再发送")
 
         self.validate_encoding_key()
-        if self.msgtype in ("textcard", "template_card"):
+        if self.msgtype in ("textcard", "template_card", "news"):
             if self.msgtype == "textcard":
                 self.validate_textcard()
+            elif self.msgtype == "news":
+                self.validate_news()
             return self._dispatch([content], segmented=False)
 
         chunks = _split_content(content)
@@ -2174,31 +2321,49 @@ class _NotifyRunner(object):
             self.log.warn("⚠ 投递校验：%s" % self._delivery_note)
 
     def do_test(self):
-        """发送测试消息：按「文本消息内容」与「卡片消息内容」两个输入框发送。
+        """发送测试消息：内容已内置，点一下即可验证整条链路。
 
-        - 两个都有内容 → 先发文本，间隔 3 秒再发卡片（共两条通知）
-        - 只有一个有内容 → 只发那一条
-        - 两个都为空 → 报错
+        界面不再提供内容输入框，测试文本与测试卡片内容都在
+        :data:`DEFAULT_TEST_TEXT` / :data:`DEFAULT_TEST_CARD` 里；
+        其他插件调用时可传 ``content`` / ``card_content`` 覆盖内置内容。
+
+        先发内置文本消息，间隔 3 秒再发内置卡片消息（共两条通知）。
         """
-        text_body = self.content.strip()
-        card_body = self.card_content.strip()
-        if not text_body and not card_body:
-            raise ValueError(
-                "「文本消息内容」与「卡片消息内容」都为空，请至少填写一个再发送")
+        text_body = (self.content.strip() or DEFAULT_TEST_TEXT).format(
+            now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            channel=self.channel_name,
+            api_base=self.client.masked_base(),
+        )
+        # 卡片内容写回 self.card_content：模板卡片的键值列表、图文消息的描述
+        # 都从这里取，调用方传了 card_content 就用它，没传就用内置的。
+        card_content = (self.card_content.strip() or DEFAULT_TEST_CARD).format(
+            now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            channel=self.channel_name,
+            api_base=self.client.masked_base(),
+        )
+        original_card_content = self.card_content
+        self.card_content = card_content
+        self.card_items = card_content
+        self.log.info("使用内置测试内容：文本 %d 字、卡片 %d 行"
+                      % (len(text_body), len(card_content.splitlines())))
 
-        # 文本消息的具体类型沿用「消息类型」设置（只取纯文本类，卡片单独处理）
-        text_kind = self.msgtype if self.msgtype in ("text", "markdown", "textcard") else "text"
+        # 文本消息取纯文本类；卡片消息取卡片类（textcard / 图文 / 模板卡片）。
+        # 都跟随「消息类型」设置 —— 例如把消息类型选成「图文消息 news」，
+        # 测试里的卡片就按 news 发送，这样能直接验证「微信是否收得到」。
+        text_kind = self.msgtype if self.msgtype in ("text", "markdown") else "text"
+        card_kind = (self.msgtype if self.msgtype in ("textcard", "template_card", "news")
+                     else "template_card")
 
-        plans = []
-        if text_body:
-            plans.append((text_kind, "文本消息", text_body))
-        if card_body:
-            plans.append(("template_card", "卡片消息", card_body))
+        plans = [
+            (text_kind, "文本消息", text_body),
+            (card_kind, "卡片消息", ""),
+        ]
 
         self.log.info("发送测试消息：共 %d 条（%s）"
                       % (len(plans), "、".join(plan[1] for plan in plans)))
-        if len(plans) > 1:
-            self.log.info("两条之间间隔 %d 秒发送" % TEST_SEND_GAP_SECONDS)
+        self.log.info("两条之间间隔 %d 秒发送" % TEST_SEND_GAP_SECONDS)
+
+        self._sent_kinds = [kind for _label, kind, _body in plans]
 
         original_msgtype = self.msgtype
         outcomes = []
@@ -2214,14 +2379,23 @@ class _NotifyRunner(object):
                     self.title = self.title or "【%s】测试消息" % self.channel_name
                     self.url = self.url or CARD_DEFAULT_ACTION_URL
                     self.card_source = self.card_source or ("%s 测试消息" % self.channel_name)
+                elif kind in ("textcard", "news"):
+                    # 这两种都要求标题与跳转链接，测试时补默认值以免因缺配置而失败
+                    self.title = self.title or "【%s】测试消息" % self.channel_name
+                    self.url = self.url or CARD_DEFAULT_ACTION_URL
 
                 self.log.info("→ 发送%s" % label)
-                outcome = self._dispatch([body], segmented=False)
+                # 模板卡片与图文消息的内容来自 self.card_content（键值列表 /
+                # 描述），正文传空以免与键值列表重复；文本卡片的描述需要正文。
+                send_body = card_content if kind == "textcard" else body
+                outcome = self._dispatch([send_body], segmented=False)
                 outcomes.append((label, kind, outcome))
                 if outcome.get("status") != "ok":
                     failures.append("%s：%s" % (label, outcome.get("error") or "发送失败"))
         finally:
             self.msgtype = original_msgtype
+            self.card_content = original_card_content
+            self.card_items = original_card_content
 
         rows = []
         msgids = []
@@ -2233,23 +2407,18 @@ class _NotifyRunner(object):
                 "成功" if outcome.get("status") == "ok" else "失败",
                 "、".join(outcome.get("msgids") or []) or (outcome.get("error") or "-")[:60],
             ])
-        while len(rows) < 2:
-            rows.append(["-", "-", "未填写，已跳过", "-"])
-
         ok = not failures
         if not ok:
             summary = failures[0]
-        elif len(outcomes) > 1:
-            summary = "两条通知都已发送成功（间隔 %d 秒）。" % TEST_SEND_GAP_SECONDS
         else:
-            summary = "测试通知已发送成功。"
+            summary = "两条通知都已发送成功（间隔 %d 秒）。" % TEST_SEND_GAP_SECONDS
 
         components = [
             {"type": "heading", "text": "发送测试消息"},
             {"type": "alert", "text": summary,
              "style": {"tone": "success" if ok else "danger"}},
-            {"type": "table", "label": "本次发送（按内容框自动决定条数）",
-             "headers": ["内容框", "消息类型", "结果", "msgid / 错误"], "rows": rows},
+            {"type": "table", "label": "本次发送（内置内容，共 2 条）",
+             "headers": ["内容", "消息类型", "结果", "msgid / 错误"], "rows": rows},
             {"type": "divider"},
             {"type": "heading", "text": "运行日志"},
             {"type": "code", "text": self.log.text()},
@@ -2350,70 +2519,8 @@ class _NotifyRunner(object):
             "ui": {"width": "wide", "layout": "stack", "components": components},
         }
 
-    def do_users(self):
-        """列出应用可见范围的部门与成员，方便填写 UserID。"""
-        departments, error = self.client.department_list()
-        if error:
-            return self._failure_result("查询部门列表失败", error)
-
-        dept_rows = []
-        user_rows = []
-        for department in departments[:100]:
-            if not isinstance(department, dict):
-                continue
-            dept_id = department.get("id")
-            name = str(department.get("name") or "")
-            dept_rows.append([str(dept_id if dept_id is not None else "-"), name])
-
-        # 只对前若干个部门取成员，避免接口调用过多
-        for department in departments[:10]:
-            if not isinstance(department, dict):
-                continue
-            dept_id = department.get("id")
-            if dept_id is None:
-                continue
-            users, error = self.client.user_simplelist(dept_id)
-            if error:
-                self.log.warn("获取部门 %s 成员失败：%s" % (dept_id, error))
-                continue
-            for user in users[:200]:
-                if not isinstance(user, dict):
-                    continue
-                user_rows.append([
-                    str(user.get("userid") or "-"),
-                    str(user.get("name") or "-"),
-                    str(dept_id),
-                ])
-
-        if not dept_rows:
-            dept_rows = [["（无）", "该应用可见范围内没有部门"]]
-        if not user_rows:
-            user_rows = [["（无）", "未取到成员，请确认应用可见范围", "-"]]
-
-        self.log.info("读取到 %d 个部门、%d 名成员" % (len(dept_rows), len(user_rows)))
-        components = [
-            {"type": "heading", "text": "应用可见范围"},
-            {"type": "table", "label": "部门（最多 100 个）",
-             "headers": ["部门 ID", "部门名称"], "rows": dept_rows},
-            {"type": "table", "label": "成员（前 10 个部门，最多各 200 人）",
-             "headers": ["UserID", "姓名", "部门 ID"], "rows": user_rows},
-            {"type": "alert",
-             "text": "把「UserID」填进「接收成员」，多个用 | 分隔；部门 ID 填入「接收部门」。"
-                     "成员姓名在部分应用类型下不返回，属正常现象。",
-             "style": {"tone": "muted"}},
-            {"type": "divider"},
-            {"type": "heading", "text": "运行日志"},
-            {"type": "code", "text": self.log.text()},
-        ]
-        return {
-            "status": "ok",
-            "func": self.func,
-            "department_count": len(dept_rows),
-            "user_count": len(user_rows),
-            "ui": {"width": "wide", "layout": "stack", "components": components},
-        }
-
     def do_history(self):
+        """列出本地发送历史：时间、类型、收件人、结果与 msgid。"""
         records = _load_history(self.data_dir)
         records.sort(key=lambda r: str(r.get("time") or ""), reverse=True)
         displayed = records[:200]
@@ -2451,18 +2558,18 @@ class _NotifyRunner(object):
         self.log.info("输出被调用方法说明；完整文档：%s" % DOCS_URL)
 
         params_rows = [
-            ["func", "必填", "send 发送 / test 测试 / config 自检 / users 查成员 / history 查历史"],
-            ["msgtype", "必填", "text / markdown / textcard / template_card（卡片通知）"],
+            ["func", "必填", "send 发送（**界面不提供，仅供调用方使用**）/ test 测试 / config 自检 / history 查历史 / docs 文档"],
+            ["msgtype", "必填", "text / news（微信可收）｜textcard（微信可收）｜markdown / template_card（微信收不到）"],
             ["touser", "常用", "UserID，多个用 | 分隔；@all 表示该应用全体可见成员"],
             ["toparty / totag", "可选", "部门 ID / 标签 ID，touser 为 @all 时被忽略"],
-            ["title", "卡片", "卡片标题（template_card 与 textcard 使用）"],
-            ["content", "常用", "文本消息内容；「发送消息」按「消息类型」发送本框，「发送测试消息」会连同下框一起处理"],
-            ["card_content", "卡片", "卡片消息内容：可直接粘贴企业微信原生 JSON（原样发送）；否则每行一条「键=值」生成键值列表"],
-            ["card_image", "卡片", "卡片主图：http(s) 链接、内网地址或容器内本地路径（都会先换成企业微信可用 URL）"],
+            ["title", "卡片", "标题（news / textcard / template_card 使用）"],
+            ["content", "常用", "正文。不传时 test 用内置测试文本、send 会报「消息内容为空」；界面没有该输入框"],
+            ["card_content", "卡片", "卡片内容：可粘贴企业微信原生 JSON（模板卡片或图文消息，原样发送）；否则每行一条「键=值」。不传时 test 用内置测试卡片内容；界面没有该输入框"],
+            ["card_image", "卡片", "主图：http(s) 链接、内网地址或容器内本地路径（都会先换成企业微信可用 URL）；news 同样使用"],
             ["card_source", "卡片", "卡片来源名称，例如「站点 1PTBA 消息」"],
             ["card_source_icon", "卡片", "来源图标 URL"],
             ["card_type", "卡片", "text_notice（默认，大图+键值列表）/ news_notice（图文展示型）"],
-            ["url", "卡片", "卡片点击跳转链接；模板卡片的 card_action 为必填项"],
+            ["url", "卡片", "点击跳转链接；template_card 的 card_action 与 textcard 均为必填，news 为空时回退官方站点"],
         ]
 
         sample = (
@@ -2594,26 +2701,41 @@ class _NotifyRunner(object):
                 "style": {"tone": "danger"},
             })
 
-        if self.msgtype == "template_card":
-            # 企业微信官方技术支持明确答复：「微信插件不支持接收模板卡片消息」，
-            # 因此模板卡片只会在企业微信客户端出现，与收件人权限无关。
+        # 本次实际发送过的类型（测试消息会同时发「文本」+「卡片」，取实际集合更准确）
+        sent_kinds = getattr(self, "_sent_kinds", None) or [self.msgtype]
+        blocked = [k for k in sent_kinds if k in WECHAT_NO]
+        if blocked:
+            # 企业微信官方限制：微信插件（原企业号 / 微工作台）不展示 markdown 与模板卡片
+            names = "、".join(MSGTYPE_LABELS.get(k, k) for k in blocked)
+            reason = ("企业微信官方技术支持明确「**微信插件不支持接收模板卡片消息**」"
+                      if "template_card" in blocked
+                      else "企业微信文档明确「微工作台（原企业号）不支持展示 markdown 消息」")
+            tip = ("要在微信也收到，把「消息类型」改成 **图文消息 news** 即可 ——"
+                   "现有的卡片 JSON 会被**自动转换**成图文（标题 / 描述 / 键值 / 链接 / 图片），"
+                   "无需重写内容；也可改用 文本卡片 或 文本。"
+                   if "template_card" in blocked else
+                   "要在微信也收到，请把「消息类型」改为 **图文消息 news**（带图）"
+                   "或 文本卡片 / 文本。")
             components.append({
                 "type": "alert",
-                "text": ("注意：企业微信官方明确「**微信插件不支持接收模板卡片消息**」—— "
-                         "本条只会在「企业微信」客户端出现，微信里一定收不到。"
-                         "要在微信收到，请把「消息类型」改成 文本 / markdown / 文本卡片，"
-                         "或把卡片结构换成 textcard。"),
+                "text": ("%s —— 本次的「%s」只会在「企业微信」客户端出现，微信里收不到。%s"
+                         % (reason, names, tip)),
                 "style": {"tone": "warning"},
             })
         elif status == "ok":
             # 自建应用的消息只到「企业微信」客户端；个人微信需要关注「微信插件」才能收到
             components.append({
                 "type": "text",
-                "text": ("消息已投递到「**企业微信**」客户端。**个人微信不会收到自建应用消息** —— "
-                         "要让它出现在微信里，需管理员在「管理后台 → 我的企业 → 微信插件」"
-                         "获取「邀请关注微信插件」二维码，成员用微信扫码关注，"
-                         "并在 微信插件 → 右上角 → 设置 → 接收应用消息 中打开开关。"
-                         "详见插件 README 的「在微信中接收消息」一节。"),
+                "text": ("「%s」微信插件可以接收，消息已同时投递给企业微信客户端。"
+                         "**若微信里仍收不到**，请按顺序检查三处：\n"
+                         "1. 管理后台 → 该应用 →「可见范围」是否包含收件人；\n"
+                         "2. 管理后台 → 该应用 → 是否勾选了「**在微工作台中始终进入主页**」——"
+                         "勾选后应用在微信端**只能收到文本消息**（其他类型会被转成"
+                         "「到企业微信查看」的提示），这一项最容易被忽略；\n"
+                         "3. 微信 → 通讯录 → 本企业 → 微信插件 → 右上角 → 设置 →"
+                         "「接收应用消息」是否已打开。\n"
+                         "（模板卡片与 markdown 在微信里永远收不到，这与配置无关。）"
+                         % MSGTYPE_LABELS.get(self.msgtype, self.msgtype)),
                 "style": {"tone": "muted"},
             })
 
@@ -2650,8 +2772,6 @@ class _NotifyRunner(object):
 
         if self.func == "config":
             return self.do_config_check()
-        if self.func == "users":
-            return self.do_users()
         if self.func == "history":
             return self.do_history()
         if self.func == "test":
