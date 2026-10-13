@@ -10,8 +10,8 @@
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/invites-signin",
       "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/invites-signin-v1.0.0/invites-signin.zip",
-      "sha256": "8a2e57f8a71d7c85e78b4b5bec324efc1da10b2c6ef1472c00f6263acf4328d1",
-      "size": 83650,
+      "sha256": "676843944c45ba4be6eed6dfdc3e20ade1e3228620199726995a265a97aa78f7",
+      "size": 84242,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"

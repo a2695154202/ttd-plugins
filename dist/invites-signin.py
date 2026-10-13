@@ -259,6 +259,22 @@ PLUGIN_MANIFEST = {
                 'type': 'field',
                 'name': 'tgto_token',
               },
+              {
+                'type': 'divider',
+              },
+              {
+                'type': 'button',
+                'label': '刷新机器人列表',
+                'action': 'run',
+                'params': {
+                  'func': 'bots',
+                },
+                'style': {
+                  'tone': 'default',
+                  'size': 'large',
+                  'variant': 'outline',
+                },
+              },
             ],
           },
           {
@@ -266,20 +282,69 @@ PLUGIN_MANIFEST = {
             'label': '账号与凭据',
             'children': [
               {
-                'type': 'field',
-                'name': 'cookie',
-              },
-              {
-                'type': 'field',
-                'name': 'username',
-              },
-              {
-                'type': 'field',
-                'name': 'user_password',
-              },
-              {
-                'type': 'field',
-                'name': 'site_base',
+                'type': 'grid',
+                'columns': 4,
+                'children': [
+                  {
+                    'type': 'group',
+                    'style': {
+                      'span': 3,
+                    },
+                    'children': [
+                      {
+                        'type': 'field',
+                        'name': 'cookie',
+                      },
+                      {
+                        'type': 'field',
+                        'name': 'username',
+                      },
+                      {
+                        'type': 'field',
+                        'name': 'user_password',
+                      },
+                      {
+                        'type': 'field',
+                        'name': 'site_base',
+                      },
+                    ],
+                  },
+                  {
+                    'type': 'group',
+                    'style': {
+                      'span': 1,
+                    },
+                    'children': [
+                      {
+                        'type': 'button',
+                        'label': '运行一次',
+                        'action': 'run',
+                        'params': {
+                          'notify': True,
+                        },
+                        'style': {
+                          'tone': 'primary',
+                          'size': 'large',
+                          'variant': 'solid',
+                        },
+                      },
+                      {
+                        'type': 'button',
+                        'label': '发送测试通知',
+                        'action': 'run',
+                        'params': {
+                          'func': 'test_notify',
+                          'notify': True,
+                        },
+                        'style': {
+                          'tone': 'success',
+                          'size': 'large',
+                          'variant': 'soft',
+                        },
+                      },
+                    ],
+                  },
+                ],
               },
             ],
           },
@@ -290,54 +355,9 @@ PLUGIN_MANIFEST = {
       },
       {
         'type': 'text',
-        'text': '「运行一次」立即用「执行功能」中选中的功能运行并强制通知结果；「刷新机器人列表」读取 TgtoDrive 已配置的通知机器人并给出序号对照。',
+        'text': '「运行一次」与「发送测试通知」在「账号与凭据」页签的最右侧；「刷新机器人列表」在「通知与接口」页签内。',
         'style': {
           'tone': 'muted',
-        },
-      },
-      {
-        'type': 'grid',
-        'columns': 2,
-        'children': [
-          {
-            'type': 'button',
-            'label': '运行一次',
-            'action': 'run',
-            'params': {
-              'notify': True,
-            },
-            'style': {
-              'tone': 'primary',
-              'size': 'large',
-              'variant': 'solid',
-            },
-          },
-          {
-            'type': 'button',
-            'label': '刷新机器人列表',
-            'action': 'run',
-            'params': {
-              'func': 'bots',
-            },
-            'style': {
-              'tone': 'default',
-              'size': 'large',
-              'variant': 'outline',
-            },
-          },
-        ],
-      },
-      {
-        'type': 'button',
-        'label': '发送测试通知',
-        'action': 'run',
-        'params': {
-          'func': 'test_notify',
-          'notify': True,
-        },
-        'style': {
-          'tone': 'success',
-          'variant': 'soft',
         },
       },
     ],
