@@ -563,6 +563,7 @@ PLUGIN_MANIFEST = {
 #   「Python 单文件必须在顶层定义唯一的 PLUGIN_MANIFEST 常量字典」
 # 这是预期行为，不是插件损坏。请改用 dist/wecom-notify.py 或 dist/wecom-notify.zip。
 
+import ast
 import json
 import re
 import socket
@@ -1500,10 +1501,17 @@ class _WecomClient(object):
             match = FROM_IP_RE.search(errmsg)
             if match:
                 parts.append("检测到本次调用的出口 IP 为 %s" % match.group(1))
+            # 把「本次到底把请求发到了哪里」写进错误里：配了转发代理却不生效时，
+            # 这一行能直接说明问题（默认地址 = 代理没被用上），不用再去翻运行日志。
+            parts.append("本次请求实际发往：%s%s"
+                         % (self.api_base,
+                            "（默认地址，转发代理未生效）" if self.api_base == DEFAULT_API_BASE
+                            else "（转发代理）"))
             parts.append(
                 "处理方式二选一：① 到企业微信管理后台「应用管理 → 自建应用 → 企业可信IP」"
                 "把上述 IP 加入白名单（配置后约 1 分钟生效）；"
-                "② 在「应用配置 → 代理地址」填写转发代理地址，由代理的固定 IP 调用接口"
+                "② 在「应用配置 → 代理地址」填写转发代理地址并**保存**，"
+                "由代理的固定 IP 调用接口（被其他插件调用时同样生效）"
             )
         if code == 60011:
             parts.append("可在「应用管理 → 自建应用 → 可见范围」中把接收者加进去")
@@ -1862,9 +1870,86 @@ def _extract_settings_params(payload):
     return flat if flat else {}
 
 
+def _manifest_input_defaults(plugin_dir):
+    """返回本插件清单里各 input 的默认值 ``{name: default}``。
+
+    存在的原因见 :meth:`_NotifyRunner._merge_own_settings`：TgtoDrive 的运行接口
+    会把所有 inputs 按默认值填齐，插件必须认得这些默认值，才能把「默认值」
+    与「调用方显式传的值」区分开。
+
+    读取顺序（任一成功即返回）：
+    1. 插件包安装：``plugin_dir`` 及其上级目录下的 ``plugin.json``；
+    2. 单文件安装：解析自身源码顶层的 ``PLUGIN_MANIFEST`` 字面量；
+    3. 内置兜底表（与 ``plugin.json`` 保持一致，改清单时记得同步）。
+    """
+    # 1) 插件包：plugin.json
+    root = Path(str(plugin_dir or "").strip() or ".")
+    for base in (root, root.parent, root.parent.parent):
+        manifest = base / "plugin.json"
+        try:
+            if not manifest.is_file():
+                continue
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        defaults = _defaults_from_manifest(data)
+        if defaults:
+            return defaults
+
+    # 2) 单文件：源码顶层的 PLUGIN_MANIFEST
+    try:
+        source = Path(__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == "PLUGIN_MANIFEST"
+                    for t in node.targets):
+                defaults = _defaults_from_manifest(ast.literal_eval(node.value))
+                if defaults:
+                    return defaults
+                break
+    except Exception:
+        pass
+
+    # 3) 内置兜底表
+    return dict(FALLBACK_INPUT_DEFAULTS)
+
+
+def _defaults_from_manifest(manifest):
+    """从清单字典里提取 ``{input_name: default}``。"""
+    if not isinstance(manifest, dict):
+        return {}
+    result = {}
+    for item in manifest.get("inputs") or []:
+        if isinstance(item, dict) and isinstance(item.get("name"), str):
+            result[item["name"].strip()] = item.get("default")
+    return result
+
+
+# 内置兜底表：与 plugin.json 的 inputs 默认值保持一致（改清单时同步更新）。
+# 只有「默认值非空」的字段才有意义，但列全更稳妥。
+FALLBACK_INPUT_DEFAULTS = {
+    "func": "send",
+    "msgtype": "text",
+    "touser": "@all",
+    "safe": False,
+    "channel_name": "企业微信",
+    "api_base": DEFAULT_API_BASE,
+    "proxy_mode": "off",
+    "split_long": True,
+    "history_days": 30,
+}
+
+
 def _read_own_settings_disk(plugin_dir, logger):
-    """从磁盘读取本插件已保存的表单设置，返回 ``(params, 说明)``。"""
-    for path in _own_settings_candidates(plugin_dir):
+    """从磁盘读取本插件已保存的表单设置，返回 ``(params, 说明)``。
+
+    找不到文件时必须把**找过哪些路径**写进日志：这条链路是「其他插件经 OpenAPI
+    调用本插件」时唯一能拿到用户凭据与「代理地址」的地方， silently 失败会让
+    「网页里发得好好的、被调用时就露馅」这类问题完全看不出原因。
+    """
+    candidates = _own_settings_candidates(plugin_dir)
+    for path in candidates:
         try:
             if not path.is_file():
                 continue
@@ -1874,6 +1959,9 @@ def _read_own_settings_disk(plugin_dir, logger):
         params = _extract_settings_params(payload)
         if params:
             return params, "本插件已保存的设置（%s）" % path.name
+    if logger is not None:
+        logger.info("未找到本插件已保存的设置文件，探测过：%s"
+                    % "、".join(str(p) for p in candidates))
     return {}, ""
 
 
@@ -1965,22 +2053,43 @@ class _NotifyRunner(object):
 
         这是「其他插件调用本插件只传正文」能成功的前提：凭据、收件人、
         分段开关等都从用户自己保存的设置里取，调用方不必也无法提供。
+
+        **关键坑（实测踩到）**：TgtoDrive 的运行接口会把清单里**所有 inputs 按默认值
+        填齐**后再交给插件 —— 调用方只传 ``func`` + ``envelope`` 两个键，插件却会
+        收到 25 个键，没传的全是默认值。因此：
+
+        * ``corp_id`` 这类**默认值为空**的字段，旧逻辑能正确顶上；
+        * ``api_base``（默认 ``https://qyapi.weixin.qq.com``）、``touser``
+          （默认 ``@all``）、``card_image``（默认品牌图）这类**默认值非空**的字段，
+          会被默认值永久顶掉 —— 表现为「用户在表单里配了转发代理地址，
+          被其他插件调用时却从服务器真实 IP 直连，报 60020」，且毫无线索。
+
+        所以这里把「值等于该输入的清单默认值」同样判定为**调用方没有显式传**，
+        让已保存的设置顶上（``func`` 与 ``msgtype`` 除外：调用方对这两个字段
+        有明确意图，``msgtype`` 会被 ``envelope`` 覆盖，显式传的 text/news 必须保留）。
         """
         saved, note = _read_own_settings_disk(self.plugin_dir, self.log)
         if not saved:
             return
+        defaults = _manifest_input_defaults(self.plugin_dir)
         filled, skipped = [], []
         for key, value in saved.items():
             if not isinstance(key, str) or value in (None, "", [], {}):
                 continue
-            if key == "func":
-                # func 必须由调用方决定：表单里通常存的是 test，沿用它会让
-                # 外部调用变成「发一条测试消息」，与调用方意图不符。
+            if key in ("func", "msgtype"):
+                # func 必须由调用方决定（表单里通常存的是 test，沿用它会让外部调用
+                # 变成「发一条测试消息」）；msgtype 由调用方/envelope 决定。
                 skipped.append(key)
                 continue
-            if self.params.get(key) in (None, ""):
+            current = self.params.get(key)
+            if current in (None, ""):
                 self.params[key] = value
                 filled.append(key)
+                continue
+            if key in defaults and current == defaults.get(key):
+                # 值恰好是清单默认值 → 视为调用方没传，用已保存的设置顶掉
+                self.params[key] = value
+                filled.append("%s（顶掉默认值 %s）" % (key, current))
         if filled:
             self.settings_note = note
             self.log.info("已从%s补齐 %d 项未传参数：%s"
@@ -2101,8 +2210,11 @@ class _NotifyRunner(object):
         if self.config_source != "插件表单":
             self.log.info("配置来源：%s" % self.config_source)
         self.log.info(
-            "接口地址 %s｜企业ID %s｜AgentId %s｜Secret %s｜网络 %s"
-            % (self.client.masked_base(), _mask(self.corp_id), self.agent_id or "（未填写）",
+            "接口地址 %s%s｜企业ID %s｜AgentId %s｜Secret %s｜网络 %s"
+            % (self.client.masked_base(),
+               "（默认地址，未走转发代理）" if self.api_base == DEFAULT_API_BASE
+               else "（转发代理）",
+               _mask(self.corp_id), self.agent_id or "（未填写）",
                _filled(self.corp_secret),
                "跟随环境变量代理" if self.use_proxy else "直连（不走代理）")
         )

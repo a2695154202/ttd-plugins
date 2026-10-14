@@ -794,6 +794,30 @@ class _DemoRunner(object):
         self.log.warn("响应里没取到任务 ID，无法确认执行结果；响应体：%s" % snippet)
         return "", "已提交（未取到任务 ID，未确认结果）", snippet
 
+    def _descend_result(self, data):
+        """把任务响应一路下沉到**最内层**的插件结果。
+
+        任务查询接口没有响应 schema，实测/规范都只保证「任务对象可能被包在
+        result / job / data 任一层」。此前的实现只下沉一层就停：
+        若响应是 ``{"job": {"job_id": …, "status": "ok", "result": {…插件结果…}}}``，
+        取到的是 **job 包裹本身**，里面的 ``recipient`` / ``delivery_ok`` /
+        ``msgids`` 全部读不到 —— 结果是页全都显示成 ``-``，
+        甚至把「收件人无效、消息没投递」的情况报成「已发送」。
+        因此这里逐层下沉到底（有层数上限，防止自引用死循环）。
+        """
+        node = data if isinstance(data, dict) else {}
+        for _ in range(4):
+            child = None
+            for key in ("result", "job", "data", "task"):
+                value = node.get(key)
+                if isinstance(value, dict) and value:
+                    child = value
+                    break
+            if child is None:
+                break
+            node = child
+        return node
+
     def _poll(self, job_id):
         """轮询任务结果，返回 ``(状态, 结果字典)``；状态取 ``ok``/``failed``/``pending``。"""
         url = self.base_url + API_JOB % job_id
@@ -803,15 +827,7 @@ class _DemoRunner(object):
             status, text, data = _http_json("GET", url, headers=self._headers())
             if status is None or not isinstance(data, dict):
                 continue
-            # 任务对象可能在 result / job / data 任一层（该接口无 schema）
-            result = None
-            for key in ("result", "job", "data"):
-                node = data.get(key)
-                if isinstance(node, dict) and node:
-                    result = node
-                    break
-            if result is None:
-                result = data
+            result = self._descend_result(data)
             state = str(result.get("status") or result.get("state") or "").strip().lower()
             if state in ("ok", "success", "done", "completed", "finished"):
                 return "ok", result
@@ -956,7 +972,10 @@ class _DemoRunner(object):
         if recipient:
             self.log.info("目标插件报告的实际收件人：%s" % recipient)
         if delivery_ok is False:
-            reason = delivery_note or ("企业微信报告收件人无效：%s" % "、".join(invalid[:8]))
+            # 有无效收件人时，以 invaliduser 为准 —— 它是企业微信对「不存在 / 不在
+            # 可见范围」的唯一明确回执；delivery_note 可能只是通讯录查询的旧结论。
+            reason = ("企业微信报告收件人无效：%s" % "、".join(invalid[:8])) if invalid \
+                else (delivery_note or "企业微信报告收件人无效")
             self.log.warn("目标插件已受理，但投递校验未通过：%s" % reason)
             return self._result(
                 ok=False, title="已受理，但消息没有投递出去", tone="warning",
@@ -974,12 +993,25 @@ class _DemoRunner(object):
             )
 
         self.log.info("发送成功%s" % ("（收件人：%s）" % recipient if recipient else ""))
+        # 目标插件一个投递字段都没回传（旧版本只返回 status）时，必须明说「无法确认」，
+        # 而不是把空值显示成 "-`，让人以为查询失败。
+        has_delivery_info = any(key in result for key in
+                                ("delivery_ok", "delivery_status", "recipient",
+                                 "msgids", "invalid_users"))
+        if not has_delivery_info:
+            self.log.warn("目标插件未回传投递结论（recipient / delivery_ok / msgids 均缺失），"
+                          "可能它的版本过旧；仅能确认请求已被受理")
         # 成功时也要给「显示成功但手机没响」的可能原因 —— 这正是最让人困惑的情况：
         # 企业微信确认收件人在可见范围内了，剩下的问题只可能出在微信插件侧。
         if delivery_status == "unknown":
             hint = ("目标插件所在环境查不到通讯录（自建转发地址常见），"
                     "因此**无法确认投递**，只知请求已被企业微信受理。"
                     "若手机上没收到，请按「企业微信通知」插件 README 第七节逐项检查。")
+        elif not has_delivery_info:
+            hint = ("目标插件没有回传投递结论，**无法确认消息是否送达** —— "
+                    "这通常表示它的版本过旧。请到「我的插件」把「%s」更新到最新版本，"
+                    "之后这里会显示「实际收件人 / 投递校验 / msgid」三行明细。"
+                    % self.target_id)
         else:
             hint = ("企业微信已确认收件人在应用可见范围内。**若手机上仍没收到**，问题在微信侧，"
                     "按顺序检查三处：\n"

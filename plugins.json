@@ -10,8 +10,8 @@
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/invites-signin",
       "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/invites-signin-v1.0.2/invites-signin.zip",
-      "sha256": "2813cc9771c5291e425721cfc64b1c745d2ced337f863e41379c076b348f79b6",
-      "size": 130949,
+      "sha256": "01def8ccf7db3c26464a415fd2e146d2f5bb757f3b66382163ae8a1677d04496",
+      "size": 131392,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"
@@ -28,8 +28,8 @@
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/wecom-call-demo",
       "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/wecom-call-demo-v1.0.0/wecom-call-demo.zip",
-      "sha256": "75fc49ef0d1f46a707946d3b6bead936e0b0d9dae8aa92e66a54155be9d5bd78",
-      "size": 68302,
+      "sha256": "ee0e0ed5d21684e440cc8c3f41f302d6c2ef21118163a0724af820adaaa56fce",
+      "size": 70729,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"
@@ -46,8 +46,8 @@
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/wecom-notify",
       "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/wecom-notify-v1.0.0/wecom-notify.zip",
-      "sha256": "f901e22a1e914b924c560ee1e33433a1c8b6e8d262b86782d7be4158b869746a",
-      "size": 190716,
+      "sha256": "35a772885d0db1ce56dcfb5e1590e806d02ffda25c38bd2afe5dcccb80a37510",
+      "size": 198725,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"
