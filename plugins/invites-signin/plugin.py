@@ -1430,15 +1430,22 @@ class _SigninRunner(object):
 
             if not isinstance(data, dict):
                 continue
-            # 任务对象可能在 result / job / data 任一层（该接口无 schema，字段名不保证）
-            result = None
-            for key in ("result", "job", "data"):
-                node = data.get(key)
-                if isinstance(node, dict) and node:
-                    result = node
+            # 任务对象可能被包在 result / job / data 任一层（该接口无 schema）。
+            # 必须**逐层下沉到底**：只取一层时，若响应形如
+            # {"job": {"status": "ok", "result": {…插件结果…}}}，
+            # 拿到的是 job 包裹本身，recipient / delivery_ok / msgids 全部读不到，
+            # 会把「收件人无效、没投递」的情况误判成已发送。
+            result = data
+            for _ in range(4):
+                child = None
+                for key in ("result", "job", "data", "task"):
+                    node = result.get(key)
+                    if isinstance(node, dict) and node:
+                        child = node
+                        break
+                if child is None:
                     break
-            if result is None:
-                result = data
+                result = child
             status = str(result.get("status") or result.get("state") or "").strip().lower()
             if status in ("ok", "success", "done", "completed", "finished"):
                 return True, result, "sent"
