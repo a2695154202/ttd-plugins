@@ -3,7 +3,7 @@
   "id": "invites-signin",
   "name": "药丸论坛签到",
   "version": "1.0.2",
-  "description": "药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。执行结果通过 TgtoDrive 已配置的通知机器人推送（可用下拉框指定用哪一个），并在结果页提供运行日志窗口。定时执行请在「我的插件 → 定时执行」中配置 cron。",
+  "description": "药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。结果通知渠道由用户自选：可只发 TgtoDrive 通知机器人、只发企业微信通知、两者都发或都不发，并可单独指定用哪个机器人。执行结果页提供指标卡片、明细表与运行日志。定时执行请在「我的插件 → 定时执行」中配置 cron。",
   "author": "a2695154202",
   "entry": "plugin.py",
   "timeout": 300,
@@ -22,18 +22,24 @@
         {"label": "读取通知机器人列表（不签到）", "value": "bots"},
         {"label": "发送测试通知（不签到）", "value": "test_notify"}
       ],
-      "help": "定时执行建议保持 auto：「运行一次」按钮会以当前选中的功能立即执行一次。"
+      "help": "定时执行建议保持 auto。页面右侧的「运行一次」「发送测试通知」「查看签到状态」三个按钮会以对应功能立即执行一次，不需要改这里的下拉框。"
     },
     {
-      "name": "notify",
-      "label": "发送结果通知",
-      "type": "boolean",
-      "default": true,
-      "help": "开启后，签到成功或失败都会通过 TgtoDrive 通知机器人推送。点「运行一次」按钮会强制开启本次通知。"
+      "name": "notify_channels",
+      "label": "通知渠道",
+      "type": "select",
+      "default": "tg",
+      "options": [
+        {"label": "不发送通知", "value": "none"},
+        {"label": "仅 Telegram 通知机器人（TgtoDrive）", "value": "tg"},
+        {"label": "仅企业微信通知（需装 wecom-notify 插件）", "value": "wecom"},
+        {"label": "两者都发（Telegram + 企业微信）", "value": "both"}
+      ],
+      "help": "决定签到结果推到哪些渠道，签到成功 / 今日已签到 / 签到失败都会按这里的选择推送。\n\n• 仅 Telegram：用 TgtoDrive「通知机器人」里配置的机器人，可在下方「TG通知机器人」指定用哪一个。\n• 仅企业微信：通过 TgtoDrive OpenAPI 调用「企业微信通知」插件（wecom-notify）发送，需要在那个插件里先填好企业 ID / AgentId / Secret，并在本页「接口与诊断」填好地址与令牌。\n• 两者都发：两条链路各发一条，互不影响；其中一条失败不影响另一条。\n• 不发送通知：只执行签到，不推送。\n\n结果页会分别显示「Telegram 通知」与「微信通知」两条实际状态，失败原因会直接写出来。"
     },
     {
       "name": "notify_bot",
-      "label": "通知机器人",
+      "label": "TG通知机器人",
       "type": "select",
       "default": "auto",
       "options": [
@@ -47,29 +53,7 @@
         {"label": "列表第 7 个机器人", "value": "index:7"},
         {"label": "列表第 8 个机器人", "value": "index:8"}
       ],
-      "help": "从 TgtoDrive 已配置的通知机器人里选一个来推送签到结果，选择会随插件设置一起保存，下次打开自动恢复。TgtoDrive 的插件清单是静态读取的，下拉框选项无法在打开页面时按接口结果动态生成，所以这里按机器人列表的序号选择：先点下方「刷新机器人列表」按钮，即可看到序号与机器人名称的对应关系，并能直接对某个机器人发送测试通知；运行时日志也会打印实际使用的机器人名称与序号。"
-    },
-    {
-      "name": "tgto_base_url",
-      "label": "TgtoDrive 地址（可选）",
-      "type": "text",
-      "default": "",
-      "placeholder": "http://127.0.0.1:12366",
-      "help": "留空则读取容器环境变量 TGTO_OPENAPI_BASE_URL。插件与 TgtoDrive 在同一容器时通常填 http://127.0.0.1:12366；仅填写了令牌而未填地址时，插件会按该默认地址尝试。"
-    },
-    {
-      "name": "tgto_token",
-      "label": "OpenAPI 令牌（可选）",
-      "type": "password",
-      "default": "",
-      "help": "留空则读取容器环境变量 TGTO_OPENAPI_TOKEN。用于读取通知机器人配置与全局代理，以及调用「企业微信通知」插件发送微信通知。注意：插件设置以明文 JSON 保存在服务器的插件目录，管理员可读取；更在意安全时请改用环境变量并把此项留空。令牌不会出现在运行日志或返回值中。"
-    },
-    {
-      "name": "wecom_notify",
-      "label": "同时发送微信通知",
-      "type": "boolean",
-      "default": false,
-      "help": "开启后，签到成功或失败都会调用「企业微信通知」插件（wecom-notify）发送一条微信通知。需先在插件市场安装并配置好该插件，并在「通知与接口」页填写「TgtoDrive 地址」与「OpenAPI 令牌」。"
+      "help": "仅在「通知渠道」包含 Telegram 时生效。从 TgtoDrive 已配置的通知机器人里选一个来推送，选择会随插件设置一起保存。\n\nTgtoDrive 的插件清单是静态读取的，下拉框选项无法按接口结果动态生成，所以这里按机器人列表的序号选择：先到「接口与诊断」页签点「刷新机器人列表」，即可看到序号与机器人名称的对应关系，还能直接对某个机器人发测试通知；运行时日志也会打印实际使用的机器人名称与序号。"
     },
     {
       "name": "wecom_msgtype",
@@ -77,10 +61,10 @@
       "type": "select",
       "default": "text",
       "options": [
-        {"label": "文本消息 text", "value": "text"},
-        {"label": "卡片通知 template_card（带图）", "value": "template_card"}
+        {"label": "文本消息 text（微信可收，推荐）", "value": "text"},
+        {"label": "图文消息 news（微信可收，带图）", "value": "news"}
       ],
-      "help": "选择卡片形式时，卡片的图片、来源名称等样式沿用「企业微信通知」插件里已保存的卡片设置。"
+      "help": "仅在「通知渠道」包含企业微信时生效。\n\n两种形式**微信都能收到**（这是「企业微信通知」插件目前支持的两种类型）：\n• 文本消息 text —— 纯文本，签到结果按「键：值」分行展示，最直接；\n• 图文消息 news —— 大图 + 标题 + 描述 + 点击跳转，微信里更接近卡片效果。\n\n选择 news 时，图片沿用「企业微信通知」插件里已保存的图片设置（也可用下方的「微信卡片图片」覆盖）。"
     },
     {
       "name": "wecom_touser",
@@ -96,14 +80,29 @@
       "type": "text",
       "default": "",
       "placeholder": "留空则使用企业微信通知插件里已保存的卡片图片",
-      "help": "仅「卡片通知」形式生效；留空则沿用「企业微信通知」插件的卡片图片设置。可填 http(s) 链接、内网地址或容器内本地图片路径。"
+      "help": "仅「图文消息 news」生效（text 为纯文本，不带图）；留空则沿用「企业微信通知」插件的图片设置。可填 http(s) 链接、内网地址或容器内本地图片路径。"
+    },
+    {
+      "name": "tgto_base_url",
+      "label": "TgtoDrive 地址",
+      "type": "text",
+      "default": "",
+      "placeholder": "http://127.0.0.1:12366",
+      "help": "留空则读取容器环境变量 TGTO_OPENAPI_BASE_URL。插件与 TgtoDrive 在同一容器时通常填 http://127.0.0.1:12366；仅填了令牌而未填地址时，插件会按该默认地址尝试。\n\n读取通知机器人列表、调用「企业微信通知」插件都走这个地址。"
+    },
+    {
+      "name": "tgto_token",
+      "label": "OpenAPI 令牌",
+      "type": "password",
+      "default": "",
+      "help": "留空则读取容器环境变量 TGTO_OPENAPI_TOKEN。用于读取通知机器人配置与全局代理，以及调用「企业微信通知」插件发送微信通知。\n\n注意：插件设置以明文 JSON 保存在服务器的插件目录，管理员可读取；更在意安全时请改用环境变量并把此项留空。令牌不会出现在运行日志或返回值中。"
     },
     {
       "name": "use_proxy",
       "label": "使用网络代理",
       "type": "boolean",
       "default": true,
-      "help": "依次尝试容器环境变量（HTTPS_PROXY/ALL_PROXY/HTTP_PROXY）与 TgtoDrive 全局代理设置。"
+      "help": "依次尝试容器环境变量（HTTPS_PROXY / ALL_PROXY / HTTP_PROXY）与 TgtoDrive 全局代理设置。"
     },
     {
       "name": "use_browser_fingerprint",
@@ -130,7 +129,7 @@
       "min": 0,
       "max": 300,
       "step": 1,
-      "help": "原插件单位为分钟，此处改为秒以适配插件超时限制。"
+      "help": "原插件单位为分钟，此处改为秒以适配插件超时限制（本插件 timeout 为 300 秒）。"
     },
     {
       "name": "history_days",
@@ -177,45 +176,53 @@
     "width": "wide",
     "layout": "stack",
     "components": [
-      {"type": "heading", "text": "药丸论坛（invites.fun）自动签到"},
-      {"type": "alert", "text": "填写 Cookie 或账号密码后即可运行。结果通知使用 TgtoDrive 已配置的通知机器人：若日志提示未配置 TgtoDrive 地址或令牌，请在「通知与接口」页填写，或设置容器环境变量 TGTO_OPENAPI_BASE_URL / TGTO_OPENAPI_TOKEN 并重启服务。需要每天自动签到时，请在「我的插件 → 定时执行」中新建计划，cron 建议 5 8 * * *（每天 08:05 北京时间），执行功能保持 auto。", "style": {"tone": "warning"}},
+      {"type": "heading", "text": "💊 药丸论坛签到"},
+      {"type": "markdown", "text": "填好 **Cookie** 或 **账号密码** 即可签到。结果推送到哪些渠道，由「**通知设置 → 通知渠道**」决定。\n\n**每天自动签到**：到「我的插件 → 定时执行」新建计划，执行功能选 `auto`，cron 建议 `5 8 * * *`（每天 08:05 北京时间）。"},
       {"type": "grid", "columns": 4, "children": [
         {"type": "tabs", "style": {"span": 3}, "children": [
           {"type": "card", "label": "签到配置", "children": [
             {"type": "field", "name": "func"},
-            {"type": "field", "name": "notify"},
-            {"type": "field", "name": "use_proxy"},
-            {"type": "field", "name": "use_browser_fingerprint"},
+            {"type": "divider"},
             {"type": "field", "name": "retry_count"},
             {"type": "field", "name": "retry_interval"},
-            {"type": "field", "name": "history_days"}
-          ]},
-          {"type": "card", "label": "通知与接口", "children": [
-            {"type": "field", "name": "notify_bot"},
-            {"type": "field", "name": "tgto_base_url"},
-            {"type": "field", "name": "tgto_token"},
+            {"type": "field", "name": "history_days"},
             {"type": "divider"},
-            {"type": "field", "name": "wecom_notify"},
+            {"type": "field", "name": "use_proxy"},
+            {"type": "field", "name": "use_browser_fingerprint"}
+          ]},
+          {"type": "card", "label": "通知设置", "children": [
+            {"type": "field", "name": "notify_channels"},
+            {"type": "divider"},
+            {"type": "field", "name": "notify_bot"},
+            {"type": "divider"},
             {"type": "field", "name": "wecom_msgtype"},
             {"type": "field", "name": "wecom_touser"},
-            {"type": "field", "name": "wecom_card_image"},
-            {"type": "divider"},
-            {"type": "button", "label": "刷新机器人列表", "action": "run", "params": {"func": "bots"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
+            {"type": "field", "name": "wecom_card_image"}
           ]},
           {"type": "card", "label": "账号与凭据", "children": [
             {"type": "field", "name": "cookie"},
+            {"type": "divider"},
             {"type": "field", "name": "username"},
             {"type": "field", "name": "user_password"},
+            {"type": "divider"},
             {"type": "field", "name": "site_base"}
+          ]},
+          {"type": "card", "label": "接口与诊断", "children": [
+            {"type": "field", "name": "tgto_base_url"},
+            {"type": "field", "name": "tgto_token"},
+            {"type": "divider"},
+            {"type": "button", "label": "刷新机器人列表", "action": "run", "params": {"func": "bots"}, "style": {"tone": "default", "size": "normal", "variant": "outline"}},
+            {"type": "text", "text": "读取通知机器人列表、发送微信通知都依赖上面的地址与令牌；留空则读容器环境变量 TGTO_OPENAPI_BASE_URL / TGTO_OPENAPI_TOKEN。", "style": {"tone": "muted"}}
           ]}
         ]},
         {"type": "group", "style": {"span": 1}, "children": [
-          {"type": "button", "label": "运行一次", "action": "run", "params": {"notify": true}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
-          {"type": "button", "label": "发送测试通知", "action": "run", "params": {"func": "test_notify", "notify": true}, "style": {"tone": "success", "size": "large", "variant": "soft"}}
+          {"type": "button", "label": "运行一次", "action": "run", "style": {"tone": "primary", "size": "large", "variant": "solid"}},
+          {"type": "button", "label": "发送测试通知", "action": "run", "params": {"func": "test_notify", "notify_channels": "both"}, "style": {"tone": "success", "size": "large", "variant": "soft"}},
+          {"type": "button", "label": "查看签到状态", "action": "run", "params": {"func": "status"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
         ]}
       ]},
       {"type": "divider"},
-      {"type": "text", "text": "「运行一次」与「发送测试通知」固定在表单顶部右侧，与页签标题同一行；「刷新机器人列表」在「通知与接口」页签内。", "style": {"tone": "muted"}}
+      {"type": "text", "text": "「运行一次」按表单当前设置执行（不会改动你的通知渠道选择）；「发送测试通知」固定同时试两条链路，便于一次确认 Telegram 与微信是否都通；「查看签到状态」只查询、不签到。", "style": {"tone": "muted"}}
     ]
   }
 }

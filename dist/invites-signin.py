@@ -7,7 +7,7 @@ PLUGIN_MANIFEST = {
   'id': 'invites-signin',
   'name': '药丸论坛签到',
   'version': '1.0.2',
-  'description': '药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。执行结果通过 TgtoDrive 已配置的通知机器人推送（可用下拉框指定用哪一个），并在结果页提供运行日志窗口。定时执行请在「我的插件 → 定时执行」中配置 cron。',
+  'description': '药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。结果通知渠道由用户自选：可只发 TgtoDrive 通知机器人、只发企业微信通知、两者都发或都不发，并可单独指定用哪个机器人。执行结果页提供指标卡片、明细表与运行日志。定时执行请在「我的插件 → 定时执行」中配置 cron。',
   'author': 'a2695154202',
   'entry': 'plugin.py',
   'timeout': 300,
@@ -47,18 +47,36 @@ PLUGIN_MANIFEST = {
           'value': 'test_notify',
         },
       ],
-      'help': '定时执行建议保持 auto：「运行一次」按钮会以当前选中的功能立即执行一次。',
+      'help': '定时执行建议保持 auto。页面右侧的「运行一次」「发送测试通知」「查看签到状态」三个按钮会以对应功能立即执行一次，不需要改这里的下拉框。',
     },
     {
-      'name': 'notify',
-      'label': '发送结果通知',
-      'type': 'boolean',
-      'default': True,
-      'help': '开启后，签到成功或失败都会通过 TgtoDrive 通知机器人推送。点「运行一次」按钮会强制开启本次通知。',
+      'name': 'notify_channels',
+      'label': '通知渠道',
+      'type': 'select',
+      'default': 'tg',
+      'options': [
+        {
+          'label': '不发送通知',
+          'value': 'none',
+        },
+        {
+          'label': '仅 Telegram 通知机器人（TgtoDrive）',
+          'value': 'tg',
+        },
+        {
+          'label': '仅企业微信通知（需装 wecom-notify 插件）',
+          'value': 'wecom',
+        },
+        {
+          'label': '两者都发（Telegram + 企业微信）',
+          'value': 'both',
+        },
+      ],
+      'help': '决定签到结果推到哪些渠道，签到成功 / 今日已签到 / 签到失败都会按这里的选择推送。\n\n• 仅 Telegram：用 TgtoDrive「通知机器人」里配置的机器人，可在下方「TG通知机器人」指定用哪一个。\n• 仅企业微信：通过 TgtoDrive OpenAPI 调用「企业微信通知」插件（wecom-notify）发送，需要在那个插件里先填好企业 ID / AgentId / Secret，并在本页「接口与诊断」填好地址与令牌。\n• 两者都发：两条链路各发一条，互不影响；其中一条失败不影响另一条。\n• 不发送通知：只执行签到，不推送。\n\n结果页会分别显示「Telegram 通知」与「微信通知」两条实际状态，失败原因会直接写出来。',
     },
     {
       'name': 'notify_bot',
-      'label': '通知机器人',
+      'label': 'TG通知机器人',
       'type': 'select',
       'default': 'auto',
       'options': [
@@ -99,29 +117,7 @@ PLUGIN_MANIFEST = {
           'value': 'index:8',
         },
       ],
-      'help': '从 TgtoDrive 已配置的通知机器人里选一个来推送签到结果，选择会随插件设置一起保存，下次打开自动恢复。TgtoDrive 的插件清单是静态读取的，下拉框选项无法在打开页面时按接口结果动态生成，所以这里按机器人列表的序号选择：先点下方「刷新机器人列表」按钮，即可看到序号与机器人名称的对应关系，并能直接对某个机器人发送测试通知；运行时日志也会打印实际使用的机器人名称与序号。',
-    },
-    {
-      'name': 'tgto_base_url',
-      'label': 'TgtoDrive 地址（可选）',
-      'type': 'text',
-      'default': '',
-      'placeholder': 'http://127.0.0.1:12366',
-      'help': '留空则读取容器环境变量 TGTO_OPENAPI_BASE_URL。插件与 TgtoDrive 在同一容器时通常填 http://127.0.0.1:12366；仅填写了令牌而未填地址时，插件会按该默认地址尝试。',
-    },
-    {
-      'name': 'tgto_token',
-      'label': 'OpenAPI 令牌（可选）',
-      'type': 'password',
-      'default': '',
-      'help': '留空则读取容器环境变量 TGTO_OPENAPI_TOKEN。用于读取通知机器人配置与全局代理，以及调用「企业微信通知」插件发送微信通知。注意：插件设置以明文 JSON 保存在服务器的插件目录，管理员可读取；更在意安全时请改用环境变量并把此项留空。令牌不会出现在运行日志或返回值中。',
-    },
-    {
-      'name': 'wecom_notify',
-      'label': '同时发送微信通知',
-      'type': 'boolean',
-      'default': False,
-      'help': '开启后，签到成功或失败都会调用「企业微信通知」插件（wecom-notify）发送一条微信通知。需先在插件市场安装并配置好该插件，并在「通知与接口」页填写「TgtoDrive 地址」与「OpenAPI 令牌」。',
+      'help': '仅在「通知渠道」包含 Telegram 时生效。从 TgtoDrive 已配置的通知机器人里选一个来推送，选择会随插件设置一起保存。\n\nTgtoDrive 的插件清单是静态读取的，下拉框选项无法按接口结果动态生成，所以这里按机器人列表的序号选择：先到「接口与诊断」页签点「刷新机器人列表」，即可看到序号与机器人名称的对应关系，还能直接对某个机器人发测试通知；运行时日志也会打印实际使用的机器人名称与序号。',
     },
     {
       'name': 'wecom_msgtype',
@@ -130,15 +126,15 @@ PLUGIN_MANIFEST = {
       'default': 'text',
       'options': [
         {
-          'label': '文本消息 text',
+          'label': '文本消息 text（微信可收，推荐）',
           'value': 'text',
         },
         {
-          'label': '卡片通知 template_card（带图）',
-          'value': 'template_card',
+          'label': '图文消息 news（微信可收，带图）',
+          'value': 'news',
         },
       ],
-      'help': '选择卡片形式时，卡片的图片、来源名称等样式沿用「企业微信通知」插件里已保存的卡片设置。',
+      'help': '仅在「通知渠道」包含企业微信时生效。\n\n两种形式**微信都能收到**（这是「企业微信通知」插件目前支持的两种类型）：\n• 文本消息 text —— 纯文本，签到结果按「键：值」分行展示，最直接；\n• 图文消息 news —— 大图 + 标题 + 描述 + 点击跳转，微信里更接近卡片效果。\n\n选择 news 时，图片沿用「企业微信通知」插件里已保存的图片设置（也可用下方的「微信卡片图片」覆盖）。',
     },
     {
       'name': 'wecom_touser',
@@ -154,14 +150,29 @@ PLUGIN_MANIFEST = {
       'type': 'text',
       'default': '',
       'placeholder': '留空则使用企业微信通知插件里已保存的卡片图片',
-      'help': '仅「卡片通知」形式生效；留空则沿用「企业微信通知」插件的卡片图片设置。可填 http(s) 链接、内网地址或容器内本地图片路径。',
+      'help': '仅「图文消息 news」生效（text 为纯文本，不带图）；留空则沿用「企业微信通知」插件的图片设置。可填 http(s) 链接、内网地址或容器内本地图片路径。',
+    },
+    {
+      'name': 'tgto_base_url',
+      'label': 'TgtoDrive 地址',
+      'type': 'text',
+      'default': '',
+      'placeholder': 'http://127.0.0.1:12366',
+      'help': '留空则读取容器环境变量 TGTO_OPENAPI_BASE_URL。插件与 TgtoDrive 在同一容器时通常填 http://127.0.0.1:12366；仅填了令牌而未填地址时，插件会按该默认地址尝试。\n\n读取通知机器人列表、调用「企业微信通知」插件都走这个地址。',
+    },
+    {
+      'name': 'tgto_token',
+      'label': 'OpenAPI 令牌',
+      'type': 'password',
+      'default': '',
+      'help': '留空则读取容器环境变量 TGTO_OPENAPI_TOKEN。用于读取通知机器人配置与全局代理，以及调用「企业微信通知」插件发送微信通知。\n\n注意：插件设置以明文 JSON 保存在服务器的插件目录，管理员可读取；更在意安全时请改用环境变量并把此项留空。令牌不会出现在运行日志或返回值中。',
     },
     {
       'name': 'use_proxy',
       'label': '使用网络代理',
       'type': 'boolean',
       'default': True,
-      'help': '依次尝试容器环境变量（HTTPS_PROXY/ALL_PROXY/HTTP_PROXY）与 TgtoDrive 全局代理设置。',
+      'help': '依次尝试容器环境变量（HTTPS_PROXY / ALL_PROXY / HTTP_PROXY）与 TgtoDrive 全局代理设置。',
     },
     {
       'name': 'use_browser_fingerprint',
@@ -188,7 +199,7 @@ PLUGIN_MANIFEST = {
       'min': 0,
       'max': 300,
       'step': 1,
-      'help': '原插件单位为分钟，此处改为秒以适配插件超时限制。',
+      'help': '原插件单位为分钟，此处改为秒以适配插件超时限制（本插件 timeout 为 300 秒）。',
     },
     {
       'name': 'history_days',
@@ -237,14 +248,11 @@ PLUGIN_MANIFEST = {
     'components': [
       {
         'type': 'heading',
-        'text': '药丸论坛（invites.fun）自动签到',
+        'text': '💊 药丸论坛签到',
       },
       {
-        'type': 'alert',
-        'text': '填写 Cookie 或账号密码后即可运行。结果通知使用 TgtoDrive 已配置的通知机器人：若日志提示未配置 TgtoDrive 地址或令牌，请在「通知与接口」页填写，或设置容器环境变量 TGTO_OPENAPI_BASE_URL / TGTO_OPENAPI_TOKEN 并重启服务。需要每天自动签到时，请在「我的插件 → 定时执行」中新建计划，cron 建议 5 8 * * *（每天 08:05 北京时间），执行功能保持 auto。',
-        'style': {
-          'tone': 'warning',
-        },
+        'type': 'markdown',
+        'text': '填好 **Cookie** 或 **账号密码** 即可签到。结果推送到哪些渠道，由「**通知设置 → 通知渠道**」决定。\n\n**每天自动签到**：到「我的插件 → 定时执行」新建计划，执行功能选 `auto`，cron 建议 `5 8 * * *`（每天 08:05 北京时间）。',
       },
       {
         'type': 'grid',
@@ -265,16 +273,7 @@ PLUGIN_MANIFEST = {
                     'name': 'func',
                   },
                   {
-                    'type': 'field',
-                    'name': 'notify',
-                  },
-                  {
-                    'type': 'field',
-                    'name': 'use_proxy',
-                  },
-                  {
-                    'type': 'field',
-                    'name': 'use_browser_fingerprint',
+                    'type': 'divider',
                   },
                   {
                     'type': 'field',
@@ -288,30 +287,36 @@ PLUGIN_MANIFEST = {
                     'type': 'field',
                     'name': 'history_days',
                   },
+                  {
+                    'type': 'divider',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'use_proxy',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'use_browser_fingerprint',
+                  },
                 ],
               },
               {
                 'type': 'card',
-                'label': '通知与接口',
+                'label': '通知设置',
                 'children': [
                   {
                     'type': 'field',
-                    'name': 'notify_bot',
-                  },
-                  {
-                    'type': 'field',
-                    'name': 'tgto_base_url',
-                  },
-                  {
-                    'type': 'field',
-                    'name': 'tgto_token',
+                    'name': 'notify_channels',
                   },
                   {
                     'type': 'divider',
                   },
                   {
                     'type': 'field',
-                    'name': 'wecom_notify',
+                    'name': 'notify_bot',
+                  },
+                  {
+                    'type': 'divider',
                   },
                   {
                     'type': 'field',
@@ -325,6 +330,48 @@ PLUGIN_MANIFEST = {
                     'type': 'field',
                     'name': 'wecom_card_image',
                   },
+                ],
+              },
+              {
+                'type': 'card',
+                'label': '账号与凭据',
+                'children': [
+                  {
+                    'type': 'field',
+                    'name': 'cookie',
+                  },
+                  {
+                    'type': 'divider',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'username',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'user_password',
+                  },
+                  {
+                    'type': 'divider',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'site_base',
+                  },
+                ],
+              },
+              {
+                'type': 'card',
+                'label': '接口与诊断',
+                'children': [
+                  {
+                    'type': 'field',
+                    'name': 'tgto_base_url',
+                  },
+                  {
+                    'type': 'field',
+                    'name': 'tgto_token',
+                  },
                   {
                     'type': 'divider',
                   },
@@ -337,31 +384,16 @@ PLUGIN_MANIFEST = {
                     },
                     'style': {
                       'tone': 'default',
-                      'size': 'large',
+                      'size': 'normal',
                       'variant': 'outline',
                     },
                   },
-                ],
-              },
-              {
-                'type': 'card',
-                'label': '账号与凭据',
-                'children': [
                   {
-                    'type': 'field',
-                    'name': 'cookie',
-                  },
-                  {
-                    'type': 'field',
-                    'name': 'username',
-                  },
-                  {
-                    'type': 'field',
-                    'name': 'user_password',
-                  },
-                  {
-                    'type': 'field',
-                    'name': 'site_base',
+                    'type': 'text',
+                    'text': '读取通知机器人列表、发送微信通知都依赖上面的地址与令牌；留空则读容器环境变量 TGTO_OPENAPI_BASE_URL / TGTO_OPENAPI_TOKEN。',
+                    'style': {
+                      'tone': 'muted',
+                    },
                   },
                 ],
               },
@@ -377,9 +409,6 @@ PLUGIN_MANIFEST = {
                 'type': 'button',
                 'label': '运行一次',
                 'action': 'run',
-                'params': {
-                  'notify': True,
-                },
                 'style': {
                   'tone': 'primary',
                   'size': 'large',
@@ -392,12 +421,25 @@ PLUGIN_MANIFEST = {
                 'action': 'run',
                 'params': {
                   'func': 'test_notify',
-                  'notify': True,
+                  'notify_channels': 'both',
                 },
                 'style': {
                   'tone': 'success',
                   'size': 'large',
                   'variant': 'soft',
+                },
+              },
+              {
+                'type': 'button',
+                'label': '查看签到状态',
+                'action': 'run',
+                'params': {
+                  'func': 'status',
+                },
+                'style': {
+                  'tone': 'default',
+                  'size': 'large',
+                  'variant': 'outline',
                 },
               },
             ],
@@ -409,7 +451,7 @@ PLUGIN_MANIFEST = {
       },
       {
         'type': 'text',
-        'text': '「运行一次」与「发送测试通知」固定在表单顶部右侧，与页签标题同一行；「刷新机器人列表」在「通知与接口」页签内。',
+        'text': '「运行一次」按表单当前设置执行（不会改动你的通知渠道选择）；「发送测试通知」固定同时试两条链路，便于一次确认 Telegram 与微信是否都通；「查看签到状态」只查询、不签到。',
         'style': {
           'tone': 'muted',
         },
@@ -430,10 +472,10 @@ PLUGIN_MANIFEST = {
     失败回退「用户名 + 密码」登录签到（与原始插件一致的双通道策略）。
   * 仅用 Cookie 签到 / 仅用账号密码签到 / 仅查询签到状态 / 查看本地签到历史。
   * 签到成功或失败后，通过 TgtoDrive 已配置的 Telegram 通知机器人推送结果；
-    可在「通知机器人」下拉框指定使用哪一个，默认自动选主通知机器人。
+    可在「TG通知机器人」下拉框指定使用哪一个，默认自动选主通知机器人。
   * 可选地，同时通过「企业微信通知」插件（wecom-notify）发送**微信通知**：
     走 TgtoDrive OpenAPI 的插件运行接口调用该插件，企业 ID / Secret 等凭据与收件人
-    沿用它在插件里已保存的设置，本插件只传要发送的内容；支持文本与带图卡片两种形式。
+    沿用它在插件里已保存的设置，本插件只传要发送的内容；支持文本与图文消息两种形式。
   * 诊断功能：读取 TgtoDrive 通知机器人列表、发送测试通知。
   * 运行结果内嵌「运行日志」窗口；清单提供「运行一次」按钮，
     点击后立即执行当前选中的功能，并强制把本次结果通知出去。
@@ -497,7 +539,6 @@ NOTIFY_TITLE = "【💊药丸签到】任务完成"
 # 调用方式见该插件的 CALLING.md：POST /api/toolbox/plugins/wecom-notify/run
 WECOM_PLUGIN_ID = "wecom-notify"
 WECOM_TITLE = "【💊药丸签到】"
-WECOM_CARD_TITLE = "💊 药丸签到"
 # 提交任务后轮询结果的次数与间隔（拿不到 job_id 或超时都不影响签到本身）
 WECOM_JOB_POLL_ATTEMPTS = 3
 WECOM_JOB_POLL_INTERVAL = 2
@@ -513,10 +554,34 @@ FUNC_LABELS = {
 }
 VALID_FUNCS = tuple(FUNC_LABELS)
 
-# 通知机器人下拉框：ttd 的清单由 AST 静态读取，选项无法在打开页面时动态生成，
+# 「TG通知机器人」下拉框：ttd 的清单由 AST 静态读取，选项无法在打开页面时动态生成，
 # 因此按「序号」选择项目机器人列表中的第 N 个，选中值随插件设置一起保存。
 NOTIFY_BOT_MAX_INDEX = 8
 NOTIFY_BOT_AUTO = "auto"
+
+# -- 通知渠道 ---------------------------------------------------------------
+# 由用户自行选择结果推到哪些渠道：none / tg / wecom / both。
+# 这里的取值必须与 plugin.json 中 notify_channels 的 options.value 完全一致。
+CHANNEL_NONE = "none"
+CHANNEL_TG = "tg"
+CHANNEL_WECOM = "wecom"
+CHANNEL_BOTH = "both"
+CHANNEL_LABELS = {
+    CHANNEL_NONE: "不发送通知",
+    CHANNEL_TG: "仅 Telegram 通知机器人",
+    CHANNEL_WECOM: "仅企业微信通知",
+    CHANNEL_BOTH: "Telegram + 企业微信",
+}
+VALID_CHANNELS = (CHANNEL_NONE, CHANNEL_TG, CHANNEL_WECOM, CHANNEL_BOTH)
+DEFAULT_CHANNEL = CHANNEL_TG
+
+# 微信通知形式。「企业微信通知」插件只支持这两种，且微信插件都能收到：
+# text 是纯文本（签到结果按「键：值」分行），news 是带图图文（大图 + 标题 + 描述）。
+WECOM_MSGTYPES = ("text", "news")
+WECOM_MSGTYPE_LABELS = {
+    "text": "文本消息 text（微信可收）",
+    "news": "图文消息 news（微信可收，带图）",
+}
 
 # Telegram 机器人令牌形如 1234567890:AAE...（用于在项目配置里安全识别）
 BOT_TOKEN_RE = re.compile(r"^\d{6,}:[A-Za-z0-9_-]{30,}$")
@@ -533,6 +598,12 @@ NAME_KEYS = ("name", "title", "label", "remark", "alias", "nickname",
 PRIMARY_HINTS = ("主", "默认", "全局", "primary", "main", "default", "admin")
 CONTAINER_HINTS = ("bot", "notify", "telegram", "tg", "list", "items",
                    "data", "accounts", "robot", "推送", "通知")
+
+# 企业微信渠道的特征键（归一化后比较：忽略大小写与 _ / -）。
+# 命中即判定「这不是 Telegram 通知机器人」—— 装了「企业微信通知」插件后，
+# 通知配置里会多出企业微信那一项，若不排除会被误列进「TG通知机器人」下拉框。
+NON_TELEGRAM_KEYS = ("corpid", "corpsecret", "agentid", "encodingaeskey",
+                     "corp_id", "corp_secret", "agent_id", "encoding_aes_key")
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +725,11 @@ def _mask_proxy(url):
     if not url:
         return ""
     return re.sub(r"//[^/@\s]+@", "//***@", str(url))
+
+
+def _num(value):
+    """把可能为 None 的数值渲染成可读文本（避免结果里出现「None 天」这种字样）。"""
+    return "-" if value is None else str(value)
 
 
 def _mask(value, head=3, tail=3):
@@ -868,15 +944,42 @@ def _list_bot_entries(payload):
     return found
 
 
+def _is_wecom_entry(node):
+    """判断一个配置条目是不是「企业微信」渠道（而不是 Telegram 通知机器人）。
+
+    依据是企业微信自建应用的几个必填特征键。归一化键名后比较，
+    这样 `corp_id` / `corpId` / `corp-id` 都能识别。
+    """
+    if not isinstance(node, dict):
+        return False
+    keys = {str(k).lower().replace("_", "").replace("-", "") for k in node}
+    return any(k in keys for k in NON_TELEGRAM_KEYS)
+
+
 def _collect_bots(payload, source):
-    """把配置响应整理成机器人条目列表，序号按发现顺序重新编号。"""
+    """把配置响应整理成机器人条目列表，序号按发现顺序重新编号。
+
+    返回 ``(bots, skipped)``；``skipped`` 是被排除的条目名称，供运行时日志与结果页说明 ——
+    装了「企业微信通知」插件后，通知渠道配置里会多出企业微信那一项，
+    它**不是 Telegram 通知机器人**，必须排除，否则会混进机器人列表里。
+    """
     bots = []
+    skipped = []
     seen = set()
 
     def push(item):
         if not isinstance(item, dict):
             return
+        # ① 企业微信渠道条目：命中其特征键就直接跳过
+        if _is_wecom_entry(item):
+            skipped.append(_pick_name(item) or "企业微信渠道条目")
+            return
         token, chat_id, proxy = _extract_bot_config(item)
+        # ② 既没有 Token 也没有推送目标 ID 的条目，不是可用的机器人
+        #   （原实现会把这类条目也列出来，导致无关配置项混进列表）
+        if not token and not chat_id:
+            skipped.append(_pick_name(item) or "无凭据条目")
+            return
         name = _pick_name(item) or "机器人 #%d" % (len(bots) + 1)
         key = (token or "", chat_id or "", name)
         if key in seen:
@@ -896,17 +999,18 @@ def _collect_bots(payload, source):
             push(item)
 
     if not bots:
-        token, chat_id, proxy = _extract_bot_config(payload)
-        if token or chat_id:
-            bots.append({
-                "name": _pick_name(payload) or "默认机器人",
-                "token": token,
-                "chat_id": chat_id,
-                "proxy": proxy,
-                "source": source,
-                "index": 1,
-            })
-    return bots
+        if not _is_wecom_entry(payload):
+            token, chat_id, proxy = _extract_bot_config(payload)
+            if token or chat_id:
+                bots.append({
+                    "name": _pick_name(payload) or "默认机器人",
+                    "token": token,
+                    "chat_id": chat_id,
+                    "proxy": proxy,
+                    "source": source,
+                    "index": 1,
+                })
+    return bots, skipped
 
 
 def _mask_id(value):
@@ -950,7 +1054,10 @@ class _SigninRunner(object):
         self.cookie_raw = str(self.p.get("cookie") or "").strip()
         self.username = str(self.p.get("username") or "").strip()
         self.password = str(self.p.get("user_password") or "")
-        self.notify_enabled = bool(self.p.get("notify", True))
+        # 通知渠道：由用户在清单里自选（none / tg / wecom / both）
+        self.channels = self._resolve_channels(self.p.get("notify_channels"))
+        self.notify_tg = self.channels in (CHANNEL_TG, CHANNEL_BOTH)
+        self.notify_wecom = self.channels in (CHANNEL_WECOM, CHANNEL_BOTH)
         self.notify_bot = str(self.p.get("notify_bot") or NOTIFY_BOT_AUTO).strip() or NOTIFY_BOT_AUTO
         if self.notify_bot != NOTIFY_BOT_AUTO and not self.notify_bot.startswith("index:"):
             self.notify_bot = NOTIFY_BOT_AUTO
@@ -958,14 +1065,22 @@ class _SigninRunner(object):
         self.tgto_token = str(self.p.get("tgto_token") or "").strip()
 
         # 微信通知：通过 OpenAPI 调用 wecom-notify 插件
-        self.wecom_notify = _as_bool(self.p.get("wecom_notify"), False)
         self.wecom_msgtype = str(self.p.get("wecom_msgtype") or "text").strip() or "text"
-        if self.wecom_msgtype not in ("text", "template_card"):
+        if self.wecom_msgtype not in WECOM_MSGTYPES:
             self.wecom_msgtype = "text"
         self.wecom_touser = str(self.p.get("wecom_touser") or "").strip()
         self.wecom_card_image = str(self.p.get("wecom_card_image") or "").strip()
         self._wecom_state = "not-called"
         self._wecom_error = ""
+        # 微信通知的投递信息（由 wecom-notify 返回：实际收件人、投递校验结论、无效收件人）
+        self._wecom_recipient = ""
+        self._wecom_msgids = []
+        self._wecom_invalid_users = []
+        self._wecom_delivery_ok = True
+        self._wecom_delivery_note = ""
+        self._tg_state = "not-called"
+        # 读取机器人列表时被排除的非 Telegram 条目（企业微信渠道、无凭据条目）
+        self._skipped_entries = []
         self.use_proxy = bool(self.p.get("use_proxy", True))
         self.use_fingerprint = bool(self.p.get("use_browser_fingerprint", False))
         self.history_days = self._as_int(self.p.get("history_days"), 30, 1, 3650, "历史记录保留天数")
@@ -980,6 +1095,28 @@ class _SigninRunner(object):
         self._last_bot_index = None
 
     # -- 参数工具 ----------------------------------------------------------
+
+    def _resolve_channels(self, value):
+        """把 ``notify_channels`` 的取值归一成 none / tg / wecom / both。
+
+        兼容早期版本：旧清单只有 ``notify``（默认开）与 ``wecom_notify``（默认关）
+        两个布尔开关，若参数里还带着它们，就按它们折算成新的渠道取值，
+        这样早先保存下来的运行参数不会因为换字段而直接失效。
+        """
+        text = str(value if value is not None else "").strip().lower()
+        if text in VALID_CHANNELS:
+            return text
+        if "notify" in self.p or "wecom_notify" in self.p:
+            tg = _as_bool(self.p.get("notify"), True)
+            wecom = _as_bool(self.p.get("wecom_notify"), False)
+            if tg and wecom:
+                return CHANNEL_BOTH
+            if tg:
+                return CHANNEL_TG
+            if wecom:
+                return CHANNEL_WECOM
+            return CHANNEL_NONE
+        return DEFAULT_CHANNEL
 
     @staticmethod
     def _as_int(value, default, low, high, label):
@@ -1011,13 +1148,14 @@ class _SigninRunner(object):
         if not client.configured:
             self.log.warn(
                 "未配置 TgtoDrive 地址或 OpenAPI 令牌，无法读取通知机器人。"
-                "可在插件「通知与接口」页填写地址与令牌，或设置容器环境变量 "
+                "可在插件「接口与诊断」页填写地址与令牌，或设置容器环境变量 "
                 "TGTO_OPENAPI_BASE_URL / TGTO_OPENAPI_TOKEN 后重启服务。"
             )
             return [], client, "openapi-not-configured"
 
         self.log.info("读取 TgtoDrive 通知机器人配置：%s" % client.describe())
         bots = []
+        skipped = []
         seen = set()
         for path in ("/api/notify-bots", "/api/proxy_settings"):
             try:
@@ -1025,12 +1163,16 @@ class _SigninRunner(object):
             except Exception as exc:
                 self.log.warn("读取 %s 失败：%s" % (path, exc))
                 continue
-            for bot in _collect_bots(payload, path):
+            found, dropped = _collect_bots(payload, path)
+            for bot in found:
                 key = (bot.get("token") or "", bot.get("chat_id") or "", bot.get("name") or "")
                 if key in seen:
                     continue
                 seen.add(key)
                 bots.append(bot)
+            for name in dropped:
+                if name not in skipped:
+                    skipped.append(name)
             usable = [b for b in bots if b.get("token") and b.get("chat_id")]
             if usable:
                 self.log.info("已从 %s 读取到 %d 个机器人条目（%d 个可用）"
@@ -1041,11 +1183,17 @@ class _SigninRunner(object):
             bot["index"] = position
         if bots:
             self._bots = bots
+        self._skipped_entries = skipped
+        if skipped:
+            # 说明被排除的原因，避免用户以为「明明装了那个渠道却不见了」
+            self.log.info("已排除 %d 个非 Telegram 通知机器人的条目：%s"
+                          "（企业微信渠道与缺少凭据的条目不计入机器人列表）"
+                          % (len(skipped), "、".join(skipped[:8])))
         self.log.info("通知机器人列表读取完成，共 %d 条" % len(bots))
         return bots, client, "" if bots else "bot-not-found"
 
     def _select_bot(self, bots):
-        """按「通知机器人」参数挑选要使用的机器人。"""
+        """按「TG通知机器人」参数挑选要使用的机器人。"""
         usable = [b for b in bots if b.get("token") and b.get("chat_id")]
         selection = self.notify_bot
 
@@ -1493,20 +1641,24 @@ class _SigninRunner(object):
 
     def _notify(self, body):
         """通过 TgtoDrive 已配置的通知机器人推送消息。"""
-        if not self.notify_enabled:
-            self.log.info("已关闭结果通知，跳过推送")
-            return False, "disabled"
+        if not self.notify_tg:
+            self.log.info("「通知渠道」未包含 Telegram，跳过通知机器人推送")
+            self._tg_state = "channel-off"
+            return False, "channel-off"
 
         bots, _, failure = self._read_bots()
         if failure:
+            self._tg_state = failure
             return False, failure
         if not bots:
             self.log.warn("TgtoDrive 配置中未读取到任何通知机器人，本次跳过通知")
+            self._tg_state = "bot-not-found"
             return False, "bot-not-found"
 
         bot = self._select_bot(bots)
         if bot is None:
             self.log.warn("读取到的机器人条目都缺少 Token 或推送目标 ID，本次跳过通知")
+            self._tg_state = "bot-not-found"
             return False, "bot-not-found"
 
         self.log.info("使用通知机器人「%s」（列表第 %s 项，来源 %s）"
@@ -1532,10 +1684,12 @@ class _SigninRunner(object):
         except Exception as exc:
             self.log.warn("发送 Telegram 通知失败：%s"
                           % scrub_text(exc, [bot.get("token")]))
+            self._tg_state = "send-error"
             return False, "send-error"
 
         if not 200 <= resp.status_code < 300:
             self.log.warn("发送 Telegram 通知失败：HTTP %s" % resp.status_code)
+            self._tg_state = "send-http-%s" % resp.status_code
             return False, "send-http-%s" % resp.status_code
         try:
             payload = resp.json() or {}
@@ -1543,10 +1697,12 @@ class _SigninRunner(object):
             payload = {}
         if payload.get("ok") is False:
             self.log.warn("Telegram 返回失败：%s" % payload.get("description"))
+            self._tg_state = "telegram-rejected"
             return False, "telegram-rejected"
 
         self._last_bot_name = str(bot.get("name") or "")
         self._last_bot_index = bot.get("index")
+        self._tg_state = "sent"
         self.log.info("通知已通过「%s」发送成功" % (bot.get("name") or "通知机器人"))
         return True, "sent"
 
@@ -1555,35 +1711,42 @@ class _SigninRunner(object):
     def _notify_wecom(self, title, items):
         """通过 TgtoDrive OpenAPI 调用「企业微信通知」插件发送一条微信通知。
 
-        ``items`` 为 ``[(键, 值), ...]``：text 模式拼成多行文本，
-        template_card 模式作为卡片的键值列表。
+        ``items`` 为 ``[(键, 值), ...]``：
+        * text 模式拼成多行「键：值」文本作为正文；
+        * news 模式作为图文的标题与描述（描述取同一个 content）。
         企业 ID / Secret 等凭据不在这里传，由 wecom-notify 里已保存的设置提供。
+
+        注意：传入的键必须是 wecom-notify 清单里**已声明**的 inputs。
+        TgtoDrive 会拒绝未知参数（HTTP 400），所以这里不能用它表单上没声明的字段。
         """
-        if not self.wecom_notify:
-            self._wecom_state = "disabled"
+        if not self.notify_wecom:
+            self._wecom_state = "channel-off"
             return False
 
         base = str(self.tgto_base_url or os.environ.get("TGTO_OPENAPI_BASE_URL", "")).strip()
         token = str(self.tgto_token or os.environ.get("TGTO_OPENAPI_TOKEN", "")).strip()
         base = base.rstrip("/")
         if not base or not token:
-            self.log.warn("已开启微信通知，但未配置「TgtoDrive 地址」或「OpenAPI 令牌」，"
-                          "本次跳过微信通知")
+            self.log.warn("「通知渠道」包含企业微信，但未配置「TgtoDrive 地址」或「OpenAPI 令牌」，"
+                          "本次跳过微信通知（见「接口与诊断」页签）")
             self._wecom_state = "no-endpoint"
             return False
 
+        # 只放 wecom-notify 已声明的输入：func / msgtype / touser / title /
+        # content / card_content / card_image。且 msgtype 的取值必须在它的
+        # options 内（text / news），否则同样会被判为非法取值。
         params = {"func": "send", "msgtype": self.wecom_msgtype}
         if self.wecom_touser:
             params["touser"] = self.wecom_touser
-        if self.wecom_msgtype == "template_card":
-            params["title"] = "%s %s" % (WECOM_CARD_TITLE, title)
-            params["card_content"] = "\n".join("%s=%s" % (key, value) for key, value in items)
+
+        lines = ["%s%s" % (WECOM_TITLE, title)]
+        lines.extend("%s：%s" % (key, value) for key, value in items)
+        params["content"] = "\n".join(lines)
+        if self.wecom_msgtype == "news":
+            # 图文消息：标题 + 描述（content）+ 图片；描述也可用 card_content
+            params["title"] = "%s %s" % (WECOM_TITLE, title)
             if self.wecom_card_image:
                 params["card_image"] = self.wecom_card_image
-        else:
-            lines = ["%s%s" % (WECOM_TITLE, title)]
-            lines.extend("%s：%s" % (key, value) for key, value in items)
-            params["content"] = "\n".join(lines)
 
         url = "%s/api/toolbox/plugins/%s/run" % (base, WECOM_PLUGIN_ID)
         self.log.info("调用「%s」插件发送微信通知（%s 类型）" % (WECOM_PLUGIN_ID, self.wecom_msgtype))
@@ -1610,7 +1773,9 @@ class _SigninRunner(object):
             elif resp.status_code in (401, 403):
                 hint = "（OpenAPI 令牌无效或权限不足）"
             elif resp.status_code == 400:
-                hint = "（参数被拒绝：请确认「%s」插件已更新到较新版本）" % WECOM_PLUGIN_ID
+                hint = ("（参数被拒绝：通常是「%s」插件版本过旧、未声明 content / "
+                        "card_content 输入。请到插件市场把「企业微信通知」更新到最新版）"
+                        % WECOM_PLUGIN_ID)
             self.log.warn("调用企业微信通知插件失败：HTTP %s%s｜%s"
                           % (resp.status_code, hint, (resp.text or "")[:160]))
             self._wecom_state = "http-%s" % resp.status_code
@@ -1621,15 +1786,29 @@ class _SigninRunner(object):
         except Exception:
             payload = {}
 
-        job_id = payload.get("job_id") or payload.get("id") or payload.get("task_id")
+        if not isinstance(payload, dict):
+            payload = {}
+        job_id = self._find_job_id(payload)
         if not job_id:
-            self.log.info("微信通知任务已提交（响应未包含 job_id，视为已受理）")
+            # 拿不到任务 ID 就没法确认发送结果。这里把响应体前 200 字打印出来，
+            # 否则「任务已提交但收不到消息」会完全看不出原因（真实故障就是这么被掩盖的）。
+            self.log.warn("运行接口未返回任务 ID，无法确认发送结果，本次按「已受理」处理；"
+                          "响应体：%s"
+                          % scrub_text((resp.text or "")[:200], [token]))
             self._wecom_state = "submitted"
             return True
 
         self.log.info("微信通知任务已提交，job_id=%s" % job_id)
-        ok, note = self._poll_wecom_job(base, token, job_id)
+        ok, result, note = self._poll_wecom_job(base, token, job_id)
+        self._absorb_wecom_result(result)
         if ok is True:
+            if self._wecom_delivery_ok is False:
+                # 企业微信受理了请求、也返回了 msgid，但收件人收不到 —— 必须区分出来，
+                # 否则调用方会显示「发送成功」，而用户实际什么都没收到。
+                # （具体原因与处理办法已由 _absorb_wecom_result 记录并写入日志）
+                self._wecom_state = "sent-not-delivered"
+                self._wecom_error = self._wecom_delivery_note
+                return False
             self.log.info("微信通知发送成功")
             self._wecom_state = "sent"
             return True
@@ -1642,8 +1821,61 @@ class _SigninRunner(object):
         self._wecom_state = "pending"
         return True
 
+    @staticmethod
+    def _find_job_id(payload):
+        """从运行接口响应里找任务 ID。
+
+        规范里该响应**没有 schema**（标记 inferred，字段名不保证），所以这里做
+        有界的递归查找：顶层先按常见键名（大小写、下划线都不敏感）匹配，再沿着
+        job / task / data / result 这类包装键往下找一层 —— 之前只查三个顶层键，
+        取不到就当成「已受理」，导致后台失败完全不可见。
+        """
+        id_keys = ("jobid", "taskid", "id", "uuid")
+        wrapper_keys = ("job", "jobs", "task", "tasks", "data", "result", "payload", "info")
+
+        def norm(key):
+            return str(key).lower().replace("_", "").replace("-", "")
+
+        def pick(node):
+            if not isinstance(node, dict):
+                return ""
+            for key, value in node.items():
+                if norm(key) in id_keys and isinstance(value, (str, int)) \
+                        and str(value).strip():
+                    return str(value).strip()
+            return ""
+
+        def walk(node, depth):
+            if depth > 3:
+                return ""
+            found = pick(node)
+            if found:
+                return found
+            items = node if isinstance(node, list) else [node]
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                found = pick(item)
+                if found:
+                    return found
+                for key, value in item.items():
+                    if norm(key) in wrapper_keys:
+                        found = walk(value, depth + 1)
+                        if found:
+                            return found
+            return ""
+
+        if not isinstance(payload, dict):
+            return ""
+        return walk(payload, 0)
+
     def _poll_wecom_job(self, base, token, job_id):
-        """轮询 wecom-notify 的任务结果，返回 ``(True/False/None, 说明)``。"""
+        """轮询 wecom-notify 的任务结果，返回 ``(状态, 结果字典, 说明)``。
+
+        状态：``True`` 发送成功 / ``False`` 发送失败 / ``None`` 未在等待时间内取到。
+        结果字典用于读取「实际收件人」与「投递校验结论」—— 企业微信在收件人不在
+        可见范围时仍返回成功，只看状态会把「请求成功但没人收到」误判为已送达。
+        """
         url = "%s/api/toolbox/plugins/jobs/%s" % (base, job_id)
         headers = {"Authorization": "Bearer %s" % token}
         for attempt in range(WECOM_JOB_POLL_ATTEMPTS):
@@ -1661,15 +1893,50 @@ class _SigninRunner(object):
 
             if not isinstance(data, dict):
                 continue
-            result = data.get("result")
-            if not isinstance(result, dict):
+            # 任务对象可能在 result / job / data 任一层（该接口无 schema，字段名不保证）
+            result = None
+            for key in ("result", "job", "data"):
+                node = data.get(key)
+                if isinstance(node, dict) and node:
+                    result = node
+                    break
+            if result is None:
                 result = data
-            status = str(result.get("status") or "").strip().lower()
-            if status in ("ok", "success", "done", "completed"):
-                return True, "sent"
-            if status in ("failed", "error", "failure"):
-                return False, str(result.get("error") or "发送失败")
-        return None, "pending"
+            status = str(result.get("status") or result.get("state") or "").strip().lower()
+            if status in ("ok", "success", "done", "completed", "finished"):
+                return True, result, "sent"
+            if status in ("failed", "error", "failure", "timeout"):
+                return False, result, str(result.get("error") or result.get("message")
+                                          or "发送失败")
+        return None, {}, "pending"
+
+    def _absorb_wecom_result(self, result):
+        """把 wecom-notify 返回的投递信息记下来，供结果页与日志使用。"""
+        if not isinstance(result, dict):
+            return
+        self._wecom_recipient = str(result.get("recipient") or "").strip()
+        self._wecom_msgids = [str(m) for m in (result.get("msgids") or []) if m]
+        invalid = [str(u) for u in (result.get("invalid_users") or []) if u]
+        self._wecom_invalid_users = invalid
+        note = str(result.get("delivery_note") or "").strip()
+        # 只有明确判定「投递不了」时才置 False；缺通讯录权限（unknown）不误报
+        if result.get("delivery_ok") is False:
+            self._wecom_delivery_ok = False
+            self._wecom_delivery_note = note or (
+                "企业微信报告收件人无效：%s" % "、".join(invalid[:8]) if invalid else "")
+        else:
+            self._wecom_delivery_ok = True
+            self._wecom_delivery_note = note
+        if self._wecom_recipient:
+            self.log.info("微信通知实际收件人：%s" % self._wecom_recipient)
+        if self._wecom_delivery_ok is False:
+            self.log.warn(
+                "微信通知虽然被企业微信受理，但**可能没有真正投递**：%s —— "
+                "请到管理后台该应用的「可见范围」里加入这些收件人，"
+                "或在「通知设置 → 微信接收成员」填写正确的 UserID。"
+                % (self._wecom_delivery_note or "收件人不在应用可见范围内"))
+        elif note:
+            self.log.info("投递校验：%s" % note)
 
     # 微信通知状态 → 结果表文案。
     # 必须覆盖 _notify_wecom 会设置的**每一个**取值：漏掉一个，它就会落到兜底文案上、
@@ -1678,10 +1945,11 @@ class _SigninRunner(object):
         "sent": "已发送",
         "submitted": "已提交",
         "pending": "已提交（后台执行，未确认结果）",
-        "no-endpoint": "未配置「TgtoDrive 地址」或「OpenAPI 令牌」（见「通知与接口」页签）",
+        "no-endpoint": "未配置「TgtoDrive 地址」或「OpenAPI 令牌」（见「接口与诊断」页签）",
         "call-error": "调用失败（网络错误，详见运行日志）",
         "failed": "发送失败（详见运行日志）",
-        "disabled": "未启用",
+        "channel-off": "本次未选择该渠道",
+        "sent-not-delivered": "已被企业微信受理，但**未投递**（收件人可能不在应用可见范围）",
         "not-called": "本次执行的功能不发送通知（仅签到会发）",
     }
 
@@ -1689,19 +1957,54 @@ class _SigninRunner(object):
         "404": "未找到「企业微信通知」插件 —— 请在「我的插件」确认它已安装并启用",
         "401": "OpenAPI 令牌无效或已撤销",
         "403": "OpenAPI 令牌权限不足",
-        "400": "参数被拒绝 —— 通常是「企业微信通知」插件版本过旧",
-        "503": "TgtoDrive 服务暂时不可用",
+        "400": "参数被拒绝 —— 通常是「企业微信通知」插件版本过旧"
+               "（未声明 content / card_content 输入），请到插件市场更新该插件",
+        "503": "TgtoDrive 服务暂时不可用，或「企业微信通知」插件已有未完成的任务"
+               "（同一插件只能有一个未完成任务，稍等几秒重试即可）",
     }
+
+    # Telegram 通知状态 → 结果表文案
+    TG_STATE_LABELS = {
+        "sent": "已发送",
+        "channel-off": "本次未选择该渠道",
+        "bot-not-found": "未从 TgtoDrive 读到可用的通知机器人",
+        "no-endpoint": "未配置「TgtoDrive 地址」或「OpenAPI 令牌」",
+        "send-error": "发送失败（网络错误，详见运行日志）",
+        "telegram-rejected": "Telegram 返回失败（详见运行日志）",
+        "not-called": "本次执行的功能不发送通知（仅签到会发）",
+    }
+
+    def _tg_row(self):
+        """结果表里的「Telegram 通知」一行。"""
+        state = self._tg_state or "not-called"
+        if state == "sent":
+            name = self._last_bot_name or "通知机器人"
+            suffix = "（列表第 %s 项）" % self._last_bot_index if self._last_bot_index else ""
+            return "已发送：%s%s" % (name, suffix)
+        if state.startswith("send-http-"):
+            return "发送失败 HTTP %s" % state[len("send-http-"):]
+        label = self.TG_STATE_LABELS.get(state)
+        if label is None:
+            return "未知状态「%s」（请把这一行反馈给插件作者）" % state
+        return label
 
     def _wecom_row(self):
         """结果表里的「微信通知」一行：每种原因都要能唯一显示出来。"""
-        if not self.wecom_notify:
-            return "未启用（勾选「同时发送微信通知」后生效）"
+        if not self.notify_wecom:
+            return "本次未选择该渠道（可在「通知设置 → 通知渠道」中开启）"
         state = self._wecom_state or "not-called"
         if state.startswith("http-"):
             code = state[len("http-"):]
             hint = self.WECOM_HTTP_HINTS.get(code)
             return "调用失败 HTTP %s%s" % (code, "：" + hint if hint else "")
+        if state == "sent-not-delivered":
+            return ("已受理但未投递：%s（收件人：%s）"
+                    % (self._wecom_delivery_note or "收件人可能不在应用可见范围",
+                       self._wecom_recipient or "-"))
+        if state == "sent" and self._wecom_recipient:
+            msgid = "、".join(self._wecom_msgids[:2]) if self._wecom_msgids else ""
+            return "已发送（收件人：%s%s）" % (self._wecom_recipient,
+                                              "，msgid：" + msgid if msgid else "")
         if state == "failed" and self._wecom_error:
             return "发送失败：%s" % str(self._wecom_error)[:120]
         label = self.WECOM_STATE_LABELS.get(state)
@@ -1720,16 +2023,83 @@ class _SigninRunner(object):
             return {"type": "alert", "text": "✅ 签到成功", "style": {"tone": "success"}}
         return {"type": "alert", "text": "ℹ️ 执行完成", "style": {"tone": "default"}}
 
-    def _base_ui(self, status_component, rows, table_label="本次执行详情"):
+    def _stat_cards(self, stats):
+        """把若干指标渲染成一排卡片 —— 比并排的表格更容易一眼看到重点。"""
+        children = []
+        for label, value in stats:
+            children.append({
+                "type": "card",
+                "label": str(label),
+                "children": [{"type": "heading", "text": str(value)}],
+            })
+        if not children:
+            return None
+        return {"type": "grid", "columns": min(max(len(children), 1), 4),
+                "children": children}
+
+    def _notify_components(self):
+        """通知链路出问题时给一条醒目提示，避免真实原因埋在表格里看不见。"""
+        alerts = []
+        if self.notify_wecom:
+            if self._wecom_state == "sent-not-delivered":
+                alerts.append({
+                    "type": "alert",
+                    "text": "⚠️ **微信通知没有真正投递**：企业微信受理了请求（也返回了 msgid），"
+                            "但收件人收不到。原因：%s\n\n收件人：%s\n\n处理办法：到企业微信管理后台"
+                            "该应用的「可见范围」里加入这些收件人，或在「通知设置 → 微信接收成员」"
+                            "填写正确的 UserID（多个用 | 分隔）。"
+                            % (self._wecom_delivery_note or "收件人可能不在应用可见范围",
+                               self._wecom_recipient or "-"),
+                    "style": {"tone": "danger"},
+                })
+            elif self._wecom_state == "no-endpoint":
+                alerts.append({
+                    "type": "alert",
+                    "text": "⚠️ 已选择微信通知，但没配置「TgtoDrive 地址」或「OpenAPI 令牌」"
+                            "—— 请到「接口与诊断」页签填写。",
+                    "style": {"tone": "warning"},
+                })
+            elif self._wecom_state.startswith("http-"):
+                code = self._wecom_state[len("http-"):]
+                hint = self.WECOM_HTTP_HINTS.get(code, "")
+                alerts.append({
+                    "type": "alert",
+                    "text": "⚠️ 微信通知调用失败（HTTP %s）%s"
+                            % (code, "：" + hint if hint else ""),
+                    "style": {"tone": "warning"},
+                })
+            elif self._wecom_state == "failed":
+                alerts.append({
+                    "type": "alert",
+                    "text": "⚠️ 微信通知发送失败：%s"
+                            % str(self._wecom_error or "详见运行日志")[:200],
+                    "style": {"tone": "warning"},
+                })
+        if self.notify_tg and self._tg_state in ("send-error", "telegram-rejected",
+                                                 "bot-not-found"):
+            alerts.append({
+                "type": "alert",
+                "text": "⚠️ Telegram 通知未成功：%s"
+                        % self.TG_STATE_LABELS.get(self._tg_state, self._tg_state),
+                "style": {"tone": "warning"},
+            })
+        return alerts
+
+    def _base_ui(self, status_component, rows, table_label="本次执行详情", stats=None):
         components = [
-            {"type": "heading", "text": "药丸论坛签到 · 执行结果"},
+            {"type": "heading", "text": "💊 药丸论坛签到 · 执行结果"},
             status_component,
-            {"type": "table", "label": table_label,
-             "headers": ["项目", "值"], "rows": rows},
-            {"type": "divider"},
-            {"type": "heading", "text": "运行日志"},
-            {"type": "code", "text": self.log.text()},
         ]
+        components.extend(self._notify_components())
+        cards = self._stat_cards(stats or [])
+        if cards:
+            components.append(cards)
+        components.append({"type": "divider"})
+        components.append({"type": "table", "label": table_label,
+                           "headers": ["项目", "值"], "rows": rows})
+        components.append({"type": "divider"})
+        components.append({"type": "heading", "text": "运行日志"})
+        components.append({"type": "code", "text": self.log.text()})
         return {"width": "wide", "layout": "stack", "components": components}
 
     def _common_rows(self):
@@ -1739,16 +2109,22 @@ class _SigninRunner(object):
             ["站点地址", self.site_base],
             ["网络代理", _mask_proxy(proxy) if proxy else "未使用"],
             ["浏览器指纹", "已启用" if self.use_fingerprint else "未启用"],
-            ["通知机器人", self._notify_bot_row()],
+            ["通知渠道", CHANNEL_LABELS.get(self.channels, self.channels)],
+            ["Telegram 通知", self._tg_row()],
             ["微信通知", self._wecom_row()],
         ]
 
-    def _notify_bot_row(self):
-        """结果表里的「通知机器人」一行：优先显示最近一次实际发送所用的机器人。"""
-        if self._last_bot_name:
-            suffix = "（列表第 %s 项）" % self._last_bot_index if self._last_bot_index else ""
-            return "%s%s" % (self._last_bot_name, suffix)
-        return "%s（本次未发送）" % _notify_bot_label(self.notify_bot)
+    def _notify_summary(self):
+        """一句话概括本次通知结果，用于指标卡。"""
+        parts = []
+        if self.notify_tg:
+            parts.append("TG %s" % ("✔" if self._tg_state == "sent" else "✘"))
+        if self.notify_wecom:
+            parts.append("微信 %s" % ("✔" if self._wecom_state in ("sent", "submitted", "pending")
+                                     else "✘"))
+        if not parts:
+            return "未发送"
+        return " / ".join(parts)
 
     # -- 各功能入口 --------------------------------------------------------
 
@@ -1772,8 +2148,15 @@ class _SigninRunner(object):
             rows = [["暂无记录", "-", "-", "-"]]
 
         self.log.info("读取本地签到历史 %d 条" % len(displayed))
+        signed = sum(1 for r in displayed
+                     if str(r.get("status") or "") in ("signed", "already"))
         components = [
-            {"type": "heading", "text": "签到历史（本地记录）"},
+            {"type": "heading", "text": "💊 签到历史（本地记录）"},
+            self._stat_cards([
+                ("记录条数", len(records)),
+                ("签到成功", signed),
+                ("保留天数", self.history_days),
+            ]),
             {"type": "table", "label": "最近 %d 条，保留 %d 天" % (len(rows), self.history_days),
              "headers": ["签到时间", "状态", "累计天数", "剩余药丸"], "rows": rows},
             {"type": "divider"},
@@ -1814,28 +2197,50 @@ class _SigninRunner(object):
         if not rows:
             rows = [["-", "未读取到机器人", "-", "-", "-"]]
 
-        components = [{"type": "heading", "text": "TgtoDrive 通知机器人列表"}]
+        components = [{"type": "heading", "text": "💊 TgtoDrive 通知机器人列表"}]
         if failure == "openapi-not-configured":
             components.append({
                 "type": "alert",
                 "text": "未配置 TgtoDrive 地址或 OpenAPI 令牌，无法读取机器人列表。"
-                        "请在「通知与接口」页填写，或配置容器环境变量 "
+                        "请在「接口与诊断」页填写，或配置容器环境变量 "
                         "TGTO_OPENAPI_BASE_URL / TGTO_OPENAPI_TOKEN 后重启服务。",
                 "style": {"tone": "warning"},
             })
         elif not bots:
-            components.append({
-                "type": "alert",
-                "text": "接口可访问，但返回内容中没有识别到机器人条目，"
-                        "请确认项目里已在「通知机器人」页面配置好机器人。",
-                "style": {"tone": "warning"},
-            })
+            if self._skipped_entries:
+                # 读到了条目，但它们都不是 Telegram 通知机器人 —— 与「一条都没配」要分清
+                components.append({
+                    "type": "alert",
+                    "text": "读到 %d 个条目，但它们都不是 Telegram 通知机器人（已排除，"
+                            "见下方说明），因此没有可选的机器人。"
+                            "请在 TgtoDrive 的「通知机器人」页面添加一个 Telegram 机器人。"
+                            % len(self._skipped_entries),
+                    "style": {"tone": "warning"},
+                })
+            else:
+                components.append({
+                    "type": "alert",
+                    "text": "接口可访问，但返回内容中没有识别到机器人条目，"
+                            "请确认已在 TgtoDrive 的「通知机器人」页面配置好机器人。",
+                    "style": {"tone": "warning"},
+                })
         else:
             components.append({
                 "type": "alert",
-                "text": "表格中的「序号」就是「通知机器人」下拉框的选项值。"
+                "text": "表格中的「序号」就是「TG通知机器人」下拉框的选项值。"
                         "可直接点击下方按钮，用对应机器人发送一条测试通知。",
                 "style": {"tone": "default"},
+            })
+
+        if self._skipped_entries:
+            components.append({
+                "type": "text",
+                "text": "已排除 %d 个非 Telegram 通知机器人的条目：%s。"
+                        "（「企业微信通知」插件等渠道的配置不是 Telegram 机器人，"
+                        "不会出现在上面的列表里；缺 Token 与推送目标 ID 的空条目也已排除。）"
+                        % (len(self._skipped_entries),
+                           "、".join(self._skipped_entries[:8])),
+                "style": {"tone": "muted"},
             })
 
         components.append({
@@ -1855,7 +2260,9 @@ class _SigninRunner(object):
                 "action": "run",
                 "params": {
                     "func": "test_notify",
-                    "notify": True,
+                    # 这里只测 Telegram 那一条链路，所以显式指定渠道。
+                    # 键必须是清单里已声明的输入，否则请求会被 TgtoDrive 拒绝。
+                    "notify_channels": CHANNEL_TG,
                     "notify_bot": "index:%s" % bot.get("index"),
                 },
                 "style": {"tone": "default", "variant": "outline", "size": "small"},
@@ -1886,10 +2293,19 @@ class _SigninRunner(object):
         }
 
     def _test_notify(self):
-        """发送一条测试通知，用于验证通知链路与所选机器人。"""
-        if not self.notify_enabled:
-            self.log.info("「发送测试通知」为手动测试动作，本次忽略「发送结果通知」开关，仍然发送")
-        self.notify_enabled = True
+        """按当前「通知渠道」发送测试通知，验证链路与所选机器人。
+
+        与签到的区别：这里不对渠道做强制覆盖 —— 渠道完全由用户在表单里选，
+        所以「只选了微信」的用户也能单独验证微信链路。
+        页面上的「发送测试通知」按钮会把渠道临时置为「两者都发」，便于一次确认两条链路。
+        """
+        if self.channels == CHANNEL_NONE:
+            self.log.warn("当前「通知渠道」为「不发送通知」，本次没有可用的发送渠道 —— "
+                          "请到「通知设置 → 通知渠道」选择渠道后再测试")
+        else:
+            self.log.info("测试通知将按当前渠道发送：%s"
+                          % CHANNEL_LABELS.get(self.channels, self.channels))
+
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         body = (
             "━━━━━━━━━━━━━━\n"
@@ -1899,8 +2315,8 @@ class _SigninRunner(object):
             "🕐 时间：%s"
         ) % now
 
-        # 勾选了「同时发送微信通知」时，测试通知也要走一遍微信链路 ——
-        # 否则用户在结果表里只会看到「微信通知 本次未发送」，无从验证这条配置。
+        # 微信链路同样要能被单独验证：否则结果表只会显示「本次未选择该渠道」，
+        # 用户配好了微信却无法确认到底通不通。
         self._notify_wecom("测试通知", [
             ("状态", "✅ 测试通知"),
             ("来源", "药丸签到插件"),
@@ -1909,26 +2325,33 @@ class _SigninRunner(object):
 
         notified, notify_state = self._notify(body)
         if notified:
-            self.log.info("测试通知发送完成")
-        else:
-            self.log.warn("测试通知未发送（%s）" % notify_state)
+            self.log.info("Telegram 测试通知发送完成")
+        elif self.notify_tg:
+            self.log.warn("Telegram 测试通知未发送（%s）" % notify_state)
 
+        wecom_ok = self._wecom_state in ("sent", "submitted", "pending")
+        ok_any = bool(notified or wecom_ok)
         rows = self._common_rows() + [
-            ["执行结果", "测试通知已发送" if notified else "测试通知未发送"],
-            ["通知状态", "已发送" if notified else "未发送（%s）" % notify_state],
+            ["测试结果", "至少一条渠道发送成功" if ok_any else "没有任何渠道发送成功"],
         ]
-        if notified:
+        if ok_any:
             status_component = {"type": "alert", "text": "✅ 测试通知已发送",
                                 "style": {"tone": "success"}}
         else:
             status_component = {"type": "alert", "text": "⚠️ 测试通知未发送",
                                 "style": {"tone": "warning"}}
-        ui = self._base_ui(status_component, rows, table_label="测试通知详情")
+        stats = [
+            ("Telegram 通知", "✔ 已发送" if notified else "✘ 未发送"),
+            ("企业微信通知", "✔ 已发送" if wecom_ok else "✘ 未发送"),
+        ]
+        ui = self._base_ui(status_component, rows, table_label="测试通知详情", stats=stats)
         return {
-            "status": "ok" if notified else "failed",
+            "status": "ok" if ok_any else "failed",
             "func": self.func,
             "notified": notified,
             "notify_state": notify_state,
+            "channels": self.channels,
+            "wecom_state": self._wecom_state,
             "bot": self._last_bot_name or None,
             "ui": ui,
         }
@@ -1963,12 +2386,19 @@ class _SigninRunner(object):
             ["累计签到天数", str(state.get("totalContinuousCheckIn"))],
             ["剩余药丸", str(state.get("money"))],
         ]
+        stats = [
+            ("今日状态", "已签到" if (can is False and today) else "尚未签到"),
+            ("剩余药丸", str(state.get("money"))),
+            ("累计签到", "%s 天" % state.get("totalContinuousCheckIn")),
+            ("使用通道", "Cookie" if channel == "cookie" else "账号密码"),
+        ]
         ui = self._base_ui(
             {"type": "alert",
              "text": "📊 状态查询完成：%s" % ("今日已签到" if (can is False and today) else "今日尚未签到"),
              "style": {"tone": "success" if (can is False and today) else "warning"}},
             rows,
             table_label="签到状态",
+            stats=stats,
         )
         return {
             "status": "ok",
@@ -1989,9 +2419,11 @@ class _SigninRunner(object):
         rows = self._common_rows() + [
             ["执行结果", "失败"],
             ["失败原因", reason],
-            ["通知状态", "已发送" if notified else "未发送（%s）" % notify_state],
         ]
-        ui = self._base_ui(self._status_alert(False, False, failed=True), rows)
+        ui = self._base_ui(
+            self._status_alert(False, False, failed=True), rows,
+            stats=[("执行结果", "✘ 失败"), ("通知结果", self._notify_summary())],
+        )
         return {
             "status": "failed",
             "func": self.func,
@@ -2093,12 +2525,16 @@ class _SigninRunner(object):
         rows = self._common_rows() + [
             ["签到状态", "今日已签到" if already else "已签到"],
             ["使用通道", channel_label],
-            ["累计签到天数", str(state.get("totalContinuousCheckIn"))],
-            ["剩余药丸", str(state.get("money"))],
+            ["累计签到天数", _num(state.get("totalContinuousCheckIn"))],
+            ["剩余药丸", _num(state.get("money"))],
             ["最近签到时间", str(state.get("lastCheckinTime") or "-")],
-            ["通知状态", "已发送" if notified else "未发送（%s）" % notify_state],
         ]
-        ui = self._base_ui(self._status_alert(True, already), rows)
+        ui = self._base_ui(self._status_alert(True, already), rows, stats=[
+            ("剩余药丸", _num(state.get("money"))),
+            ("累计签到", "%s 天" % _num(state.get("totalContinuousCheckIn"))),
+            ("使用通道", channel_label),
+            ("通知结果", self._notify_summary()),
+        ])
         return {
             "status": "already" if already else "success",
             "func": self.func,

@@ -5,7 +5,7 @@
 本仓库同时满足两个身份：它是一个标准的 GitHub 开源仓库，也是一个可直接被 TgtoDrive 读取的**插件市场目录**。把本仓库地址填入 TgtoDrive 的「插件市场 → 来源设置」，即可浏览、安装并自动检查更新这里发布的插件，无需另外的市场服务器。
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Plugins](https://img.shields.io/badge/plugins-2-informational)](#插件列表)
+[![Plugins](https://img.shields.io/badge/plugins-3-informational)](#插件列表)
 [![Protocol](https://img.shields.io/badge/plugin%20protocol-schema__version%201-informational)](#插件列表)
 
 ---
@@ -15,7 +15,8 @@
 | 插件 | 版本 | 说明 | 文档 |
 | --- | --- | --- | --- |
 | **药丸论坛签到**<br>`invites-signin` | 1.0.2 | 药丸论坛（invites.fun，Flarum）自动签到。Cookie 优先换取新会话后签到，失败自动回退用户名密码登录；支持仅查询签到状态、查看本地签到历史；结果经 TgtoDrive 已配置的**主通知机器人**推送，也可**同时调用「企业微信通知」插件发送微信通知**（文本或带图卡片，「发送测试通知」同样会走微信链路）；结果页内含运行日志窗口与「运行一次」按钮。 | [README](plugins/invites-signin/README.md) |
-| **企业微信通知**<br>`wecom-notify` | 1.0.0 | 让 TgtoDrive 具备**企业微信（WeCom）应用消息推送**能力。填写企业 ID / 应用 AgentId / 应用 Secret 后，可用文本、markdown 或文本卡片发送给成员、部门、标签或全体可见成员；卡片既可用表单拼装，也可**直接粘贴企业微信原生 template_card JSON**；支持转发代理地址（应对「企业可信IP」限制）、**可选是否经过容器代理**、超长消息自动分段、access_token 本地缓存与发送历史，内置**「发送测试消息」按钮**一键验证通知链路。 | [README](plugins/wecom-notify/README.md) |
+| **企业微信通知**<br>`wecom-notify` | 1.0.0 | 让 TgtoDrive 具备**企业微信（WeCom）应用消息推送**能力，同时作为其他插件的「微信通知出口」。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可把消息发给成员、部门、标签或全体可见成员。消息类型只有 **文本 text** 与 **图文消息 news** 两种 —— 这两种微信插件都能收到；卡片类类型（模板卡片 / 文本卡片 / markdown）已移除，但调用方传入模板卡片 JSON 时会**自动转换成图文**。支持转发代理地址（应对「企业可信IP」限制）、**可选是否经过容器代理**、超长消息自动分段、access_token 本地缓存与发送历史，内置**「发送测试消息」按钮**一键验证通知链路。 | [README](plugins/wecom-notify/README.md) |
+| **微信通知调用示例**<br>`wecom-call-demo` | 1.0.0 | **演示「一个插件如何调用另一个插件」**的最小可用范例：通过 OpenAPI 运行接口调用「企业微信通知」插件发送消息。界面分「**文本消息**」与「**卡片消息**」两个互相独立的子页面，各配收件人与内容（卡片页已预填示例），点对应按钮即发出。发送前先读取目标插件清单，**校验参数的键是否已声明、下拉取值是否在选项内**（提前挡住服务端会拒绝的 HTTP 400）；发送后轮询结果并区分「请求被受理」与「消息真的送达」（`delivery_ok`）。目标插件 id 可配置，便于扩展。 | [README](plugins/wecom-call-demo/README.md) |
 
 ---
 
@@ -63,8 +64,9 @@
 │   │   ├── plugin.json            # 插件清单
 │   │   ├── plugin.py              # 插件入口（同步 run(params, context)）
 │   │   └── README.md              # 插件使用文档
-│   └── wecom-notify/              # 第二个插件，结构与上相同
-│       └── marketplace.json       # 可选：市场元数据
+│   ├── wecom-notify/              # 第二个插件，结构与上相同
+│   │   └── marketplace.json       # 可选：市场元数据
+│   └── wecom-call-demo/           # 第三个插件（插件互调示例），结构与上相同
 ├── scripts/
 │   ├── package_plugin.py          # 打包插件并计算 sha256 / size
 │   ├── build_marketplace.py       # 扫描 plugins/ 生成 plugins.json
@@ -73,7 +75,8 @@
 ├── publish.bat                    # 双击即发布（Windows，调用 scripts/publish_all.py）
 ├── dist/                          # 单文件版产物（可直接导入；zip 不入库，随 Release 分发）
 │   ├── invites-signin.py
-│   └── wecom-notify.py
+│   ├── wecom-notify.py
+│   └── wecom-call-demo.py
 ├── plugins.json                   # 插件市场目录 schema_version 1
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md

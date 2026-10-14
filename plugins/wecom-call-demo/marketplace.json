@@ -1,0 +1,9 @@
+{
+  "category": "tool",
+  "python_requires": ">=3.9",
+  "requirements": [
+    "requests>=2.28"
+  ],
+  "status": "active",
+  "notice": "示例插件：演示如何从其他插件调用「企业微信通知」发送消息。"
+}

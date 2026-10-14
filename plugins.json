@@ -5,13 +5,13 @@
       "id": "invites-signin",
       "name": "药丸论坛签到",
       "version": "1.0.2",
-      "description": "药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。执行结果通过 TgtoDrive 已配置的通知机器人推送（可用下拉框指定用哪一个），并在结果页提供运行日志窗口。定时执行请在「我的插件 → 定时执行」中配置 cron。",
+      "description": "药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。结果通知渠道由用户自选：可只发 TgtoDrive 通知机器人、只发企业微信通知、两者都发或都不发，并可单独指定用哪个机器人。执行结果页提供指标卡片、明细表与运行日志。定时执行请在「我的插件 → 定时执行」中配置 cron。",
       "author": "a2695154202",
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/invites-signin",
       "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/invites-signin-v1.0.2/invites-signin.zip",
-      "sha256": "2fc4a6df39bcacb1217ea5e1d67b93313bc53fdedb82a661968b8ca327e01dd4",
-      "size": 102330,
+      "sha256": "2813cc9771c5291e425721cfc64b1c745d2ced337f863e41379c076b348f79b6",
+      "size": 130949,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"
@@ -20,16 +20,34 @@
       "notice": ""
     },
     {
+      "id": "wecom-call-demo",
+      "name": "微信通知调用示例",
+      "version": "1.0.0",
+      "description": "演示「一个 TgtoDrive 插件如何调用另一个插件」的最小可用范例：本插件通过 OpenAPI 运行接口调用「企业微信通知」插件（wecom-notify）发送消息。界面分为「文本消息」与「卡片消息」两个互相独立的子页面，各自配置收件人与内容，点对应的按钮即发出。发送前会先读取目标插件的清单，校验本次要传的参数「键是否已声明、下拉取值是否在选项内」，因此不会出现难懂的 HTTP 400；发送后会轮询任务结果，并区分「请求被受理」与「消息真的送达」（delivery_ok），避免把没收到的消息报成成功。目标插件 id 可配置，便于扩展或换用其它通知插件。",
+      "author": "a2695154202",
+      "category": "tool",
+      "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/wecom-call-demo",
+      "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/wecom-call-demo-v1.0.0/wecom-call-demo.zip",
+      "sha256": "75fc49ef0d1f46a707946d3b6bead936e0b0d9dae8aa92e66a54155be9d5bd78",
+      "size": 68302,
+      "python_requires": ">=3.9",
+      "requirements": [
+        "requests>=2.28"
+      ],
+      "status": "active",
+      "notice": "示例插件：演示如何从其他插件调用「企业微信通知」发送消息。"
+    },
+    {
       "id": "wecom-notify",
       "name": "企业微信通知",
       "version": "1.0.0",
-      "description": "让 TgtoDrive 具备企业微信（WeCom）应用消息推送能力，并且可以被其他插件调用。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可用文本、markdown、文本卡片或带图卡片通知，把任意内容发送给指定成员、部门、标签或全体成员；支持转发代理地址（应对「企业可信IP」限制）、超长消息自动分段、access_token 本地缓存与发送历史。内置「发送测试消息」按钮一键验证通知链路，「查看调用方法」按钮给出被其他插件调用的完整参数说明与示例代码。",
+      "description": "让 TgtoDrive 具备企业微信（WeCom）应用消息推送能力，并且可以被其他插件调用。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可把任意内容发送给指定成员、部门、标签或全体成员。消息类型只保留「文本 text」与「图文消息 news」两种 —— 这两种微信插件都能收到，也是本插件的定位所在；news 支持带图（大图 + 标题 + 描述 + 点击跳转），是微信里最接近卡片的形态。支持转发代理地址（应对「企业可信IP」限制）、可选是否经过容器代理、超长消息自动分段、access_token 本地缓存与发送历史。内置「发送测试消息」一键验证通知链路，「查看调用方法」给出被其他插件调用的完整参数说明与示例。",
       "author": "a2695154202",
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/wecom-notify",
       "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/wecom-notify-v1.0.0/wecom-notify.zip",
-      "sha256": "026c6a156ad2363f840391070ab2ac23ff810ce39a4df13033842b2b126e7385",
-      "size": 156915,
+      "sha256": "b10dbf028a25256c5402570ad2711279c6332a2c2b23bf27f5e6cd836fa39b34",
+      "size": 191273,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"
