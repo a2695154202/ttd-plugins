@@ -30,9 +30,11 @@
 * 条目时间戳 ``ZIP_DATE_TIME``；
 * 条目顺序（按 POSIX 相对路径排序，避免 Windows 不区分大小写、Linux 区分大小写
   带来的顺序差异）；
-* ``create_system``（默认随平台为 0 或 3，会写进中央目录）。
+* ``create_system``（默认随平台为 0 或 3，会写进中央目录）；
+* **文本条目的换行符**（统一归一为 LF，见 :func:`read_package_bytes`）。
 
-以上保证相同源码在任何平台、任何 Python 版本下都得到相同的字节与 SHA-256。
+以上保证相同源码在任何平台、任何 Python 版本、任何工作区换行符状态下
+都得到相同的字节与 SHA-256。
 
 只依赖 Python 标准库，可直接在开发机与 GitHub Actions 上运行。
 """
@@ -317,6 +319,35 @@ def assert_manifest_is_literal(source: str) -> None:
         raise SystemExit("[错误] 源码中 PLUGIN_MANIFEST 赋值语句不唯一")
 
 
+# 会被写进压缩包的文本类扩展名。打包前统一把 CRLF 归一为 LF。
+#
+# 为什么必须做：zip 采用原始字节，而开发者在 Windows + `core.autocrlf` 下，
+# 工作区文件可能是 CRLF，git 提交的却是 LF —— 于是「本地打包」与「CI 打包」
+# 得到不同字节，`plugins.json` 声明的 sha256/size 会与 Release 附件对不上，
+# 市场安装报「GitHub 文件超过允许大小或长度无效」。
+# 实测踩过一次：`wecom-notify/CALLING.md` 工作区为 CRLF（557 行），
+# 让本地 zip 比 CI 多 557 字节。
+TEXT_SUFFIXES = frozenset((
+    ".py", ".json", ".md", ".txt", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".csv",
+))
+
+
+def read_package_bytes(path: Path) -> bytes:
+    """读取待打包文件：文本类统一归一为 LF，其它类型原样返回。
+
+    非 UTF-8 的文本文件原样返回 —— 宁可保留原字节，也不做可能损坏内容的转码。
+    """
+    data = path.read_bytes()
+    if path.suffix.lower() not in TEXT_SUFFIXES:
+        return data
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized.encode("utf-8") if normalized != text else data
+
+
 def build_zip(plugin_dir: Path, out_path: Path) -> int:
     files = iter_package_files(plugin_dir)
     if not files:
@@ -330,7 +361,7 @@ def build_zip(plugin_dir: Path, out_path: Path) -> int:
             # 会写进 zip 中央目录并改变整体字节，这里固定为 Unix。
             info.create_system = 3
             info.external_attr = 0o644 << 16
-            archive.writestr(info, path.read_bytes())
+            archive.writestr(info, read_package_bytes(path))
     return len(files)
 
 
