@@ -42,7 +42,7 @@ jobs:
         # 必须打包全部插件：build_marketplace.py 会扫描 plugins/ 下的每一个插件并读取
         # 它的 dist 产物，只打包目标插件会导致刷新 plugins.json 时找不到其它插件的产物。
         # 打包是确定性输出，重复打包不会改变已发布插件的哈希。
-        run: python scripts/package_plugin.py --all
+        run: python .github/scripts/package_plugin.py --all
 
       - name: 解析版本号与 tag
         id: meta
@@ -87,7 +87,7 @@ jobs:
           fi
 
       - name: 刷新 plugins.json
-        run: python scripts/build_marketplace.py --repo "${{ github.repository }}"
+        run: python .github/scripts/build_marketplace.py --repo "${{ github.repository }}"
 
       - name: 提交 plugins.json
         run: |

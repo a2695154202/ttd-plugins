@@ -20,6 +20,22 @@
       "notice": ""
     },
     {
+      "id": "ttd-daily-digest",
+      "name": "TTD每日推送",
+      "version": "1.0.0",
+      "description": "每天定时把 TgtoDrive 的数据汇总成一条消息推送给你：今日入库资源列表、Emby 新增电影/电视剧数量、媒体库总览、最近播放、追剧日历、播放趋势等。所有数据都通过 TgtoDrive 自身的 OpenAPI 读取，不需要额外配置 Emby 地址或密钥。支持推到 Telegram（直接调用 ttd 已配置的通知机器人）与微信（调用「企业微信通知」插件，凭据由它自己保管），可单选也可双发。页面右侧有「发送测试推送」按钮，点击立即把当前配置的内容发给你，用于验证整条链路。板块可自由勾选、每项可设条数上限，报告版式支持纯文本与 Markdown（Telegram）两种。",
+      "author": "a2695154202",
+      "category": "tool",
+      "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/ttd-daily-digest",
+      "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/ttd-daily-digest-v1.0.0/ttd-daily-digest.zip",
+      "sha256": "cc33bc00b8ae35eb8628f9689f1747bd6838caeb323f3bb0948d7ba3d97441e6",
+      "size": 116596,
+      "python_requires": ">=3.9",
+      "requirements": [],
+      "status": "active",
+      "notice": ""
+    },
+    {
       "id": "wecom-call-demo",
       "name": "微信通知调用示例",
       "version": "1.0.0",
@@ -46,8 +62,8 @@
       "category": "tool",
       "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/wecom-notify",
       "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/wecom-notify-v1.0.0/wecom-notify.zip",
-      "sha256": "35a772885d0db1ce56dcfb5e1590e806d02ffda25c38bd2afe5dcccb80a37510",
-      "size": 198725,
+      "sha256": "8c3973b194c824e14d15390a3181661293c3ad33d7fa21aa20869aa01948ccab",
+      "size": 199526,
       "python_requires": ">=3.9",
       "requirements": [
         "requests>=2.28"

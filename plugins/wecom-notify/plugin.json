@@ -58,13 +58,6 @@
       "help": "多个标签用 | 分隔，最多 100 个。touser 为 @all 时本项被忽略。"
     },
     {
-      "name": "safe",
-      "label": "保密消息（不可分享、带水印）",
-      "type": "boolean",
-      "default": false,
-      "help": "仅「文本消息 text」支持：true 时不可对外分享且内容显示水印。图文消息不支持该项，勾选后会被忽略并在日志中说明。"
-    },
-    {
       "name": "title",
       "label": "图文消息标题",
       "type": "text",
@@ -226,7 +219,7 @@
       {"type": "grid", "columns": 4, "children": [
         {"type": "group", "style": {"span": 3}, "children": [
           {"type": "card", "label": "应用配置", "children": [
-            {"type": "markdown", "text": "所有配置都在这一页。三个分组：「① 应用凭据」是必填项；「② 发送参数」决定发给谁、发什么；「③ 回调与高级」多数情况可以不动。"},
+            {"type": "markdown", "text": "所有配置都在这一页。三个分组：「① 应用凭据」是必填项；「② 回调与高级」多数情况可以不动；「③ 发送参数」决定发给谁、发什么。"},
             {"type": "card", "label": "① 应用凭据（必填）", "children": [
               {"type": "field", "name": "corp_id"},
               {"type": "field", "name": "agent_id"},
@@ -235,25 +228,7 @@
               {"type": "field", "name": "proxy_mode"},
               {"type": "field", "name": "channel_name"}
             ]},
-            {"type": "card", "label": "② 发送参数", "children": [
-              {"type": "field", "name": "func"},
-              {"type": "field", "name": "msgtype"},
-              {"type": "divider"},
-              {"type": "field", "name": "touser"},
-              {"type": "field", "name": "toparty"},
-              {"type": "field", "name": "totag"},
-              {"type": "field", "name": "safe"},
-              {"type": "divider"},
-              {"type": "field", "name": "title"},
-              {"type": "field", "name": "url"},
-              {"type": "field", "name": "card_image"},
-              {"type": "divider"},
-              {"type": "field", "name": "content"},
-              {"type": "field", "name": "card_content"},
-              {"type": "divider"},
-              {"type": "field", "name": "envelope"}
-            ]},
-            {"type": "card", "label": "③ 回调与高级", "children": [
+            {"type": "card", "label": "② 回调与高级", "children": [
               {"type": "markdown", "text": "下面的「回调 Token / EncodingAESKey」来自企业微信「接收消息」配置。本插件是一次性执行、**没有常驻监听**，收不到回调，所以这两项仅作留档与格式校验，**不影响消息发送**；「管理员白名单」在收件人全部为空时作为兜底收件人。"},
               {"type": "field", "name": "token"},
               {"type": "field", "name": "encoding_aes_key"},
@@ -265,12 +240,31 @@
               {"type": "field", "name": "tgto_token"},
               {"type": "divider"},
               {"type": "button", "label": "检查配置", "action": "run", "params": {"func": "config"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
+            ]},
+            {"type": "card", "label": "③ 发送参数", "children": [
+              {"type": "field", "name": "func"},
+              {"type": "field", "name": "msgtype"},
+              {"type": "divider"},
+              {"type": "field", "name": "touser"},
+              {"type": "field", "name": "toparty"},
+              {"type": "field", "name": "totag"},
+              {"type": "divider"},
+              {"type": "field", "name": "title"},
+              {"type": "field", "name": "url"},
+              {"type": "field", "name": "card_image"},
+              {"type": "divider"},
+              {"type": "field", "name": "content"},
+              {"type": "field", "name": "card_content"},
+              {"type": "divider"},
+              {"type": "field", "name": "envelope"}
             ]}
           ]}
         ]},
         {"type": "group", "style": {"span": 1}, "children": [
           {"type": "button", "label": "发送测试消息", "action": "run", "params": {"func": "test"}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
-          {"type": "button", "label": "查看调用方法", "action": "run", "params": {"func": "docs"}, "style": {"tone": "default", "size": "large", "variant": "outline"}}
+          {"type": "button", "label": "查看调用方法", "action": "run", "params": {"func": "docs"}, "style": {"tone": "default", "size": "large", "variant": "outline"}},
+          {"type": "link", "label": "📄 打开调用教程（CALLING.md）", "href": "https://github.com/a2695154202/ttd-plugins/blob/main/plugins/wecom-notify/CALLING.md", "style": {"tone": "primary", "align": "center"}},
+          {"type": "text", "text": "点上面按钮看参数速查；点链接看仓库里的完整教程（另开新标签页）。", "style": {"tone": "muted", "size": "small", "align": "center"}}
         ]}
       ]},
       {"type": "divider"},

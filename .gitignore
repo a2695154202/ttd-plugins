@@ -1,7 +1,12 @@
 # ---- WorkBuddy Agent 本地数据（不随仓库分发）----
 .workbuddy/
 
-# ---- 构建产物（由 scripts/package_plugin.py 与 Release 工作流生成）----
+# ---- 本地发布脚本（仅本地使用，不入库）----
+# 仓库构建脚本已移至 .github/scripts/（CI 与本地都会用到）；
+# 这里的 publish_all.py / gh_publish.py 是本机一键发布的私有工具，不进公开仓库。
+/scripts/
+
+# ---- 构建产物（由 .github/scripts/package_plugin.py 与 Release 工作流生成）----
 # dist/ 下只放行单文件版 .py（方便直接从仓库下载后导入）；
 # 压缩包 .zip 不入库，随 Release 附件分发。
 dist/*

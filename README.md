@@ -55,8 +55,12 @@
 .
 ├── .github/
 │   ├── ISSUE_TEMPLATE/            # Issue 模板
+│   ├── scripts/                   # 仓库构建脚本（CI 与本地共用）
+│   │   ├── package_plugin.py      # 打包插件并计算 sha256 / size
+│   │   └── build_marketplace.py   # 扫描 plugins/ 生成 plugins.json
 │   └── workflows/
-│       └── publish-plugin.yml     # 打包 → 发布 Release → 刷新 plugins.json
+│       ├── publish-plugin.yml     # 打包 → 发布 Release → 刷新 plugins.json
+│       └── validate.yml           # 推送时校验清单、打包与 plugins.json 同步
 ├── docs/
 │   └── tgto-plugin-kb/            # TgtoDrive 插件开发参考资料存档
 ├── plugins/
@@ -67,12 +71,7 @@
 │   ├── wecom-notify/              # 第二个插件，结构与上相同
 │   │   └── marketplace.json       # 可选：市场元数据
 │   └── wecom-call-demo/           # 第三个插件（插件互调示例），结构与上相同
-├── scripts/
-│   ├── package_plugin.py          # 打包插件并计算 sha256 / size
-│   ├── build_marketplace.py       # 扫描 plugins/ 生成 plugins.json
-│   ├── publish_all.py             # 一键发布：打包 → 提交 → 推送 → 发布 → 校验
-│   └── gh_publish.py              # 触发 Publish plugin 并逐字节校验 Release 附件
-├── publish.bat                    # 双击即发布（Windows，调用 scripts/publish_all.py）
+├── publish.bat                    # 双击即发布（Windows；其调用的本地发布脚本不入库）
 ├── dist/                          # 单文件版产物（可直接导入；zip 不入库，随 Release 分发）
 │   ├── invites-signin.py
 │   ├── wecom-notify.py
@@ -88,7 +87,7 @@
 - 每个插件位于 `plugins/<插件 id>/`，目录名与 `plugin.json` 中的 `id` 一致。
 - 插件源码目录只放**源码与文档**；打包产物写入 `dist/`，通过 Release 分发。
   `dist/*.py`（单文件版）入库以便直接下载导入，`dist/*.zip` 不入库。
-- 单文件版由 `scripts/package_plugin.py` 在文件开头**内联唯一的 `PLUGIN_MANIFEST` 字典字面量**；
+- 单文件版由 `.github/scripts/package_plugin.py` 在文件开头**内联唯一的 `PLUGIN_MANIFEST` 字典字面量**；
   源码目录里的 `plugin.py` 不带清单，不能当作单文件导入。
 - `docs/` 下为 TgtoDrive 官方文档与接口规范的开发参考存档，版权归 TgtoDrive 项目所有。
 
@@ -100,13 +99,13 @@
 
 ```bash
 # 打包 plugins/ 下全部插件到 dist/，并计算 sha256 与字节数
-python scripts/package_plugin.py --all
+python .github/scripts/package_plugin.py --all
 
 # 只打包指定插件
-python scripts/package_plugin.py --plugin invites-signin
+python .github/scripts/package_plugin.py --plugin invites-signin
 
 # 依据 dist/ 产物生成/刷新 plugins.json
-python scripts/build_marketplace.py --repo <账号>/<仓库名>
+python .github/scripts/build_marketplace.py --repo <账号>/<仓库名>
 ```
 
 `build_marketplace.py` 在 GitHub Actions 中会从 `GITHUB_REPOSITORY` 环境变量自动获取仓库名，无需手动传入。
@@ -134,9 +133,8 @@ python scripts/build_marketplace.py --repo <账号>/<仓库名>
 | `publish.bat --no-api-fallback` | `git push` 失败时不改用 GitHub API 兜底 |
 | `publish.bat --dry-run` | 只打印将要执行的命令，不做任何改动 |
 
-也可以直接运行 `python scripts/publish_all.py`（参数相同），或只跑发布环节：
-`python scripts/gh_publish.py`（加 `--verify-only` 可只校验不发布，
-加 `--push` 可先用 API 推送本地 HEAD）。
+以上链路依赖两个**本机私有脚本**（`scripts/publish_all.py` 与 `scripts/gh_publish.py`）——
+它们只存在于维护者本机、**不随仓库分发**（已在 `.gitignore` 中排除），因此你在克隆下来的仓库里看不到它们。
 
 > `git push` 需要访问 `github.com:443`。若该域名不可达（典型报错
 > `CONNECT tunnel failed, response 502`）而 `api.github.com` 正常，
@@ -159,7 +157,7 @@ python scripts/build_marketplace.py --repo <账号>/<仓库名>
 
 > ⚠️ **`publish.bat` 必须保持纯 ASCII 内容**：`cmd.exe` 是按系统 ANSI 代码页解析 `.bat` 文件的，
 > 即使写了 `chcp 65001` 也救不了解析阶段；写入 UTF-8 中文会导致整段语法错乱。
-> 因此脚本里的中文提示全部由 `scripts/publish_all.py` 输出。
+> 因此脚本里的中文提示全部由本机私有的 `scripts/publish_all.py` 输出。
 >
 > 打包是**确定性输出**（zip 用 STORED、固定时间戳、按 POSIX 路径排序），
 > 脚本对全部插件打包不会改变已发布插件的哈希，也不会影响其它插件的 Release，

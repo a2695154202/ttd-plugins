@@ -52,7 +52,9 @@ import tokenize
 import zipfile
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# 本脚本位于 <repo>/.github/scripts/ 下，仓库根目录需往上三级
+# （parents[0]=scripts, parents[1]=.github, parents[2]=仓库根）。
+REPO_ROOT = Path(__file__).resolve().parents[2]
 PLUGINS_DIR = REPO_ROOT / "plugins"
 DIST_DIR = REPO_ROOT / "dist"
 

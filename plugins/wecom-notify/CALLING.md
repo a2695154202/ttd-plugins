@@ -249,7 +249,6 @@ def notify_via_wecom(content, title="TgtoDrive 通知", msgtype="text"):
 | `title` | text | `news` 的标题。企业微信侧上限 128 字节，**插件按 60 字符保守截断**并在日志说明；留空时取「渠道名称 + 通知」 |
 | `url` | text | `news` 的点击跳转链接；留空时回退官方站点（企业微信要求 `url` 与小程序二选一） |
 | `card_image` | text | `news` 的主图：http(s) 链接，**或容器内已存在的本地图片路径 / 内网地址**（后两者会先下载再上传换取企业微信可用 URL） |
-| `safe` | boolean | 仅 `text` 支持：`true` 时不可分享并带水印 |
 | `split_long` | boolean | 超长正文是否自动分段，默认 `true` |
 | `channel_name` / `corp_id` / `agent_id` / `corp_secret` / `api_base` / `proxy_mode` / `token` / `encoding_aes_key` / `admin_users` / `history_days` / `tgto_base_url` / `tgto_token` | — | 配置类字段，**一般不必传**，沿用用户已保存的设置 |
 

@@ -15,8 +15,8 @@
 
 ## 自检清单
 
-- [ ] `python scripts/package_plugin.py --all` 通过
-- [ ] `plugins.json` 已用 `python scripts/build_marketplace.py --repo <账号>/<仓库名>` 重新生成
+- [ ] `python .github/scripts/package_plugin.py --all` 通过
+- [ ] `plugins.json` 已用 `python .github/scripts/build_marketplace.py --repo <账号>/<仓库名>` 重新生成
 - [ ] `plugin.json` 的 `id` 未变更；若有功能改动，`version` 已提升
 - [ ] `CHANGELOG.md` 已记录本次变更
 - [ ] 插件 `README.md` 的参数表与实际 `inputs` 一致

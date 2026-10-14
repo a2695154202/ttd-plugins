@@ -21,10 +21,15 @@
   * 查看发送历史：本地记录每次发送的类型、收件人、结果与错误码。
   * **查看调用方法**：输出「被其他插件调用」的参数表与示例，
     并给出仓库内 CALLING.md 的在线链接。
+    教程链接在**两个位置**都可见，确保其他开发者一眼能发现：
+      ① 清单 UI 的右栏，「查看调用方法」按钮**正下方**放了一个 `link` 组件
+         （无需点击即可看到并直接打开）；
+      ② 结果页把链接放在**最上方**（紧跟标题），点按钮后第一眼就能看到，
+         不再埋在长文中段/末尾。
 
 界面取舍
   * 界面只有一个「应用配置」页签，所有输入集中在此（含原先独立的「回调与高级」字段）。
-  * 顶部两个按钮：发送测试消息、查看调用方法。
+  * 顶部三个可点项：发送测试消息、查看调用方法、以及其下的「打开调用教程」超链接。
   * 「执行功能」下拉框含 发送消息(send) / 发送测试消息(test) / 检查配置(config) /
     查看发送历史(history) / 查看调用方法(docs)。
     **send 必须留在下拉框里**：TgtoDrive 会校验 `select` 的取值是否在 options 内，
@@ -1434,7 +1439,6 @@ FALLBACK_INPUT_DEFAULTS = {
     "func": "send",
     "msgtype": "text",
     "touser": "@all",
-    "safe": False,
     "channel_name": "企业微信",
     "api_base": DEFAULT_API_BASE,
     "proxy_mode": "off",
@@ -1529,7 +1533,6 @@ class _NotifyRunner(object):
         self.touser = _s(self.params, "touser")
         self.toparty = _s(self.params, "toparty")
         self.totag = _s(self.params, "totag")
-        self.safe = _b(self.params, "safe", False)
         self.title = _s(self.params, "title")
         self.url = _s(self.params, "url")
         self.content = _s(self.params, "content")
@@ -1946,12 +1949,6 @@ class _NotifyRunner(object):
         else:
             raise ValueError("不支持的「消息类型」：%s" % self.msgtype)
 
-        if self.safe:
-            if self.msgtype == "text":
-                payload["safe"] = 1
-            else:
-                self.log.warn("「%s」类型不支持保密消息（safe），该项已忽略"
-                              % MSGTYPE_LABELS.get(self.msgtype, self.msgtype))
         return payload
 
     def do_send(self, content_override=None, ignore_content=False):
@@ -2286,7 +2283,6 @@ class _NotifyRunner(object):
             ["url", "可选", "点击跳转链接（news 使用）；留空时回退官方站点"],
             ["card_image", "可选", "主图：http(s) 链接、内网地址或容器内本地路径（内网/本地会先上传换成企业微信可用 URL）"],
             ["card_content", "可选", "news 的图文描述备用来源：每行一条「键=值」，或直接粘贴企业微信原生 JSON（news / articles / 模板卡片，模板卡片会被自动转成图文）"],
-            ["safe", "可选", "仅 text 支持：true 时不可分享并带水印"],
         ]
 
         sample = (
@@ -2316,15 +2312,19 @@ class _NotifyRunner(object):
 
         components = [
             {"type": "heading", "text": "被其他插件调用"},
+            # 链接放在最前面：点「查看调用方法」后，用户最先看到的就是这个可点击的教程入口，
+            # 不用再往下翻（历史 bug：链接埋在长文中间，其他开发者找不到）。
+            {"type": "link", "label": "📄 打开完整调用教程（CALLING.md）", "href": DOCS_URL,
+             "style": {"tone": "primary", "size": "large", "align": "center"}},
+            {"type": "text", "text": "上方链接会在新标签页打开仓库里的 CALLING.md；下面是本页速查。",
+             "style": {"tone": "muted", "size": "small", "align": "center"}},
             {"type": "markdown", "text": (
                 "本插件可以通过 TgtoDrive OpenAPI 被**其他插件或脚本**调用，"
                 "用于发送企业微信通知。消息类型只有**两种**：\n\n"
                 "- `text` 文本消息 —— 纯文本，微信插件可收；\n"
                 "- `news` 图文消息 —— 大图 + 标题 + 描述 + 点击跳转，微信插件同样可收。\n\n"
                 "这两种都是微信插件能收到的类型，调用方按需二选一即可。\n\n"
-                "**完整调用说明（参数表 / 返回值 / 错误处理 / 完整示例）：**\n\n"
-                "- [plugins/wecom-notify/CALLING.md](%s)\n\n"
-                "调用入口：`POST /api/toolbox/plugins/wecom-notify/run`" % DOCS_URL)},
+                "调用入口：`POST /api/toolbox/plugins/wecom-notify/run`")},
             {"type": "table", "label": "常用参数（完整列表见 CALLING.md）",
              "headers": ["参数", "场景", "说明"], "rows": params_rows},
             {"type": "heading", "text": "最小示例（Python）"},

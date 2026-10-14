@@ -73,8 +73,8 @@ def run(params, context):
 ## 提交前自检
 
 ```bash
-python scripts/package_plugin.py --plugin <插件 id>
-python scripts/build_marketplace.py --repo <账号>/<仓库名>
+python .github/scripts/package_plugin.py --plugin <插件 id>
+python .github/scripts/build_marketplace.py --repo <账号>/<仓库名>
 ```
 
 脚本会校验清单字段、打包产物并重算哈希。请确认：

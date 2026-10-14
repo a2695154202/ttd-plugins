@@ -25,7 +25,7 @@ jobs:
           python-version: "3.11"
 
       - name: 打包全部插件（同时校验清单字段）
-        run: python scripts/package_plugin.py --all
+        run: python .github/scripts/package_plugin.py --all
 
       - name: 校验 JSON 与 Python 语法
         run: |
@@ -58,7 +58,7 @@ jobs:
 
           targets = sorted(Path("dist").glob("*.py"))
           if not targets:
-              sys.exit("[错误] dist/ 下没有单文件产物，请先运行 scripts/package_plugin.py --all")
+              sys.exit("[错误] dist/ 下没有单文件产物，请先运行 .github/scripts/package_plugin.py --all")
 
           for path in targets:
               tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -90,11 +90,11 @@ jobs:
           set -euo pipefail
           if grep -q 'OWNER/REPO' plugins.json; then
             echo "::warning::plugins.json 仍包含占位仓库 OWNER/REPO，已跳过同步检查。"
-            echo "::warning::请执行：python scripts/build_marketplace.py --repo <账号>/<仓库名>"
+            echo "::warning::请执行：python .github/scripts/build_marketplace.py --repo <账号>/<仓库名>"
             exit 0
           fi
           cp plugins.json "$RUNNER_TEMP/plugins.json.bak"
-          python scripts/build_marketplace.py --repo "${{ github.repository }}"
+          python .github/scripts/build_marketplace.py --repo "${{ github.repository }}"
           if ! diff -u "$RUNNER_TEMP/plugins.json.bak" plugins.json; then
             echo "::error::plugins.json 与当前产物不一致，请本地重新生成后提交。"
             exit 1
