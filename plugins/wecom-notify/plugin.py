@@ -93,6 +93,10 @@ except Exception:  # pragma: no cover - 仅在极简环境触发
 # ---------------------------------------------------------------------------
 
 DEFAULT_API_BASE = "https://qyapi.weixin.qq.com"
+# 卡片图片的清单默认值（plugin.json → inputs.card_image.default）。
+# 只被 FALLBACK_INPUT_DEFAULTS 引用（plugin.json 读不到的边缘场景）；
+# 改清单里的默认图时记得同步这里。
+CARD_DEFAULT_IMAGE = "http://192.168.101.100:12366/static/brand_logo.png?v=18de0d2b37259200-5d57"
 DEFAULT_TGTO_BASE = "http://127.0.0.1:12366"
 
 USER_AGENT = "TgtoDrive-WecomNotify/1.0 (+https://github.com/a2695154202/ttd-plugins)"
@@ -102,6 +106,10 @@ READ_TIMEOUT = 30
 
 # 文本与图文消息的正文上限（企业微信文档：text 不超过 2048 字节）
 MESSAGE_BYTE_LIMIT = 2048
+# 分段后缀「\n\n（第 x/y 段）」占用的字节数上界（3 位数序号也够用）。
+# 切分时必须把它从上限里预留出来：曾经按 2048 整切、拼上后缀后单段实际可达
+# 2070+ 字节，突破 docstring 承诺的「每段不超 2048 字节」。
+SEGMENT_SUFFIX_RESERVE = 24
 
 # access_token 有效期 7200 秒；提前 300 秒视为过期
 TOKEN_REFRESH_AHEAD = 300
@@ -338,6 +346,10 @@ SENSITIVE_KEYS = frozenset((
     "corpsecret", "corpidsecret", "appsecret", "corpsecretkey", "secret",
     "token", "callbacktoken", "tgtotoken", "openapitoken", "accesstoken",
     "encodingaeskey", "aeskey", "password", "passwd", "credential", "apikey",
+    # 企业 ID 本身不是「凭据」，但模块 docstring 承诺过它不进运行日志 ——
+    # 曾因漏了它，调用方传入 corp_id 时被原样打印（而 URL 脱敏里又把它当敏感项，
+    # 两边标准不一）。agent_id 不在承诺范围内，保留原样便于排障。
+    "corpid", "corpcode",
 ))
 SENSITIVE_HINTS = ("secret", "token", "password", "passwd", "aeskey",
                    "credential", "apikey")
@@ -708,8 +720,12 @@ def _http_download(url, max_bytes=2 * 1024 * 1024, timeout=None):
     timeout = timeout or (CONNECT_TIMEOUT, READ_TIMEOUT)
     if requests is not None:
         try:
-            response = requests.get(url, timeout=timeout, stream=True,
-                                    headers={"User-Agent": USER_AGENT})
+            response = requests.get(
+                url, timeout=timeout, stream=True,
+                headers={"User-Agent": USER_AGENT},
+                # 卡片图多是内网地址，且下载失败只会降级用原地址 —— 不显式禁用
+                # 环境代理的话，容器里的全局代理会把内网图片请求送出去而失败。
+                proxies={"http": None, "https": None})
             if response.status_code != 200:
                 return None, "HTTP %s" % response.status_code
             data = response.content
@@ -718,7 +734,9 @@ def _http_download(url, max_bytes=2 * 1024 * 1024, timeout=None):
     else:
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
-            with urllib.request.urlopen(request, timeout=timeout[1]) as response:
+            # ProxyHandler({})：禁用环境变量代理（与 requests 分支语义一致）
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(request, timeout=timeout[1]) as response:
                 data = response.read(max_bytes + 1)
         except Exception as exc:
             return None, "%s: %s" % (type(exc).__name__, exc)
@@ -1221,8 +1239,12 @@ class _TtdConfigReader(object):
         headers = {"Authorization": "Bearer %s" % self.token} if self.token else {}
         if requests is not None:
             try:
-                response = requests.get(url, headers=headers,
-                                        timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+                response = requests.get(
+                    url, headers=headers,
+                    timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+                    # ttd 是同容器 / 内网管理端：显式禁用环境代理，
+                    # 否则容器里的全局代理（为出网配的）会把请求送出去而失败
+                    proxies={"http": None, "https": None})
                 if response.status_code != 200:
                     return None, "HTTP %s" % response.status_code
                 return response.json(), None
@@ -1230,7 +1252,8 @@ class _TtdConfigReader(object):
                 return None, "%s: %s" % (type(exc).__name__, exc)
         request = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=READ_TIMEOUT) as response:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(request, timeout=READ_TIMEOUT) as response:
                 return json.loads(response.read().decode("utf-8", "replace")), None
         except Exception as exc:
             return None, "%s: %s" % (type(exc).__name__, exc)
@@ -1435,10 +1458,14 @@ def _defaults_from_manifest(manifest):
 
 # 内置兜底表：与 plugin.json 的 inputs 默认值保持一致（改清单时同步更新）。
 # 只有「默认值非空」的字段才有意义，但列全更稳妥。
+# ⚠️ 曾漏了 card_image（三个非空默认值之一）、func 也写错（清单是 test）——
+# 这张表只在「plugin.json 与源码内 PLUGIN_MANIFEST 都读不到」的边缘场景生效，
+# 一旦与清单漂移，默认值顶替防护就会在那里静默失效。
 FALLBACK_INPUT_DEFAULTS = {
-    "func": "send",
+    "func": "test",
     "msgtype": "text",
     "touser": "@all",
+    "card_image": CARD_DEFAULT_IMAGE,
     "channel_name": "企业微信",
     "api_base": DEFAULT_API_BASE,
     "proxy_mode": "off",
@@ -1507,10 +1534,19 @@ class _NotifyRunner(object):
         # 再把调用方传来的「标准化发送内容」覆盖上去（envelope 优先级最高）。
         # 这一步让本插件成为**通用发送模块**：调用方只准备一份标准化内容，
         # 内容完全来自调用方，不使用本插件自己的预设内容。
-        self.envelope_source = ""
-        self._apply_envelope(self.params.get("envelope"))
-
+        #
+        # func 先解析：envelope **只在本次调用显式传入时**应用 —— 用户表单里
+        # 粘贴保存过的 envelope 不参与设置补齐（见 _merge_own_settings），
+        # 否则之后每次「只传 content」的调用都会被陈旧 envelope 覆盖正文，
+        # 界面点「发送测试消息」也会发出陈旧内容。
         self.func = _s(self.params, "func", "send") or "send"
+        self.envelope_source = ""
+        if self.func != "test":
+            # func=test 用**内置**测试内容，与 envelope 无关（CALLING.md 原话）。
+            self._apply_envelope(self.params.get("envelope"))
+        elif str(self.params.get("envelope") or "").strip():
+            self.log.info("func=test 使用内置测试内容，忽略本次传入的「标准化发送内容」")
+
         self.msgtype = (_s(self.params, "msgtype", "text") or "text").lower()
         self.channel_name = _s(self.params, "channel_name", "企业微信") or "企业微信"
 
@@ -1581,9 +1617,12 @@ class _NotifyRunner(object):
         for key, value in saved.items():
             if not isinstance(key, str) or value in (None, "", [], {}):
                 continue
-            if key in ("func", "msgtype"):
+            if key in ("func", "msgtype", "envelope"):
                 # func 必须由调用方决定（表单里通常存的是 test，沿用它会让外部调用
-                # 变成「发一条测试消息」）；msgtype 由调用方/envelope 决定。
+                # 变成「发一条测试消息」）；msgtype 由调用方/envelope 决定；
+                # **envelope 只在本次调用显式传入时应用** —— 用户表单里粘贴保存过的
+                # envelope 一旦参与补齐，之后每次「只传 content」的调用都会被那份
+                # 陈旧内容覆盖正文（CALLING.md 承诺「界面留空无副作用」）。
                 skipped.append(key)
                 continue
             current = self.params.get(key)
@@ -1759,11 +1798,18 @@ class _NotifyRunner(object):
 
         结果会缓存：本方法在一次执行里会被调用多次（构造请求体、生成结果文案、
         投递校验），不缓存会把同一行日志重复打印好几遍。
+
+        ⚠️ ``@all`` 兜底**只在三个收件人字段都为空时**才用。曾经一上来就
+        ``touser = self.touser or "@all"``：平台会把 touser 的清单默认值（``@all``）
+        填齐，于是「只传 toparty / totag」的调用（文档明确支持的用法）里 touser
+        恒为 ``@all`` —— 企业微信的规则是 touser 与 toparty/totag **互斥**，
+        build_payload 随即丢掉部门/标签，消息发给**全体可见成员**。
+        想只发部门/标签的调用方，实际造成了群发。
         """
         if self._recipients is not None:
             return self._recipients
-        touser = self.touser or "@all"
-        if not self.touser and not self.toparty and not self.totag:
+        touser, toparty, totag = self.touser, self.toparty, self.totag
+        if not touser and not toparty and not totag:
             admins = _split_ids(self.admin_users)
             if admins:
                 touser = "|".join(admins)
@@ -1773,8 +1819,8 @@ class _NotifyRunner(object):
                 touser = "@all"
                 self.log.info("未填写任何收件人，默认发送给应用全体可见成员（@all）")
         self.log.info("接收人：成员 %s｜部门 %s｜标签 %s"
-                      % (touser or "（无）", self.toparty or "（无）", self.totag or "（无）"))
-        self._recipients = (touser, self.toparty, self.totag)
+                      % (touser or "（无）", toparty or "（无）", totag or "（无）"))
+        self._recipients = (touser, toparty, totag)
         return self._recipients
 
     # -- 各功能 ------------------------------------------------------------
@@ -1965,7 +2011,7 @@ class _NotifyRunner(object):
             self.validate_news()
             return self._dispatch([content], segmented=False)
 
-        chunks = _split_content(content)
+        chunks = _split_content(content, MESSAGE_BYTE_LIMIT - SEGMENT_SUFFIX_RESERVE)
         if len(chunks) > 1:
             if not self.split_long:
                 chunks = chunks[:1]
@@ -2065,10 +2111,19 @@ class _NotifyRunner(object):
         其他插件调用时可传 ``content`` / ``card_content`` 覆盖。
         """
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        text_body = (self.content.strip() or DEFAULT_TEST_TEXT).format(
-            now=now, channel=self.channel_name, api_base=self.client.masked_base())
-        news_body = (self.card_content.strip() or DEFAULT_TEST_CARD).format(
-            now=now, channel=self.channel_name, api_base=self.client.masked_base())
+        # 占位符只对**内置模板**做替换；调用方传入的 content / card_content
+        # 原样发送。曾经对用户内容也调 .format()：正文里出现 {foo} 抛 KeyError、
+        # {} 抛 IndexError、单个 { 抛 ValueError，异常穿透 run() 直达平台，
+        # 用户看到一串 Python 异常而不是可读提示（把 JSON / 代码片段当测试内容
+        # 就会撞上）。
+        def _fill(template, fallback):
+            if template.strip():
+                return template
+            return fallback.format(now=now, channel=self.channel_name,
+                                   api_base=self.client.masked_base())
+
+        text_body = _fill(self.content, DEFAULT_TEST_TEXT)
+        news_body = _fill(self.card_content, DEFAULT_TEST_CARD)
         self.log.info("使用内置测试内容：文本 %d 字、图文描述 %d 行"
                       % (len(text_body), len(news_body.splitlines())))
 
@@ -2107,6 +2162,18 @@ class _NotifyRunner(object):
                 outcomes.append((label, kind, outcome))
                 if outcome.get("status") != "ok":
                     failures.append("%s：%s" % (label, outcome.get("error") or "发送失败"))
+                elif outcome.get("delivery_ok") is False:
+                    # **接口返回成功 ≠ 投递成功**：收件人不在应用可见范围时，企业微信
+                    # 仍返回 errcode=0 + msgid，但消息不会送达。「发送测试消息」这个按钮
+                    # 的用途就是验证「配置 + 网络 + 收件人 + 可收性」，曾经只看 status，
+                    # 结果顶部显示「两条都已发送成功」、实际无人收到 —— 自检工具给出假成功。
+                    detail = str(outcome.get("delivery_note") or "投递校验未通过")
+                    invalid = outcome.get("invalid_users") or []
+                    if invalid:
+                        detail = "%s；无效收件人：%s" % (detail, "、".join(invalid[:5]))
+                    failures.append("%s：接口已受理但没有投递（%s）—— 请检查管理后台"
+                                    "该应用的「可见范围」是否包含收件人"
+                                    % (label, detail))
         finally:
             self.msgtype = original_msgtype
             self.card_content = original_card_content
@@ -2116,10 +2183,16 @@ class _NotifyRunner(object):
         msgids = []
         for label, kind, outcome in outcomes:
             msgids.extend(outcome.get("msgids") or [])
+            if outcome.get("status") != "ok":
+                verdict = "失败"
+            elif outcome.get("delivery_ok") is False:
+                verdict = "已受理未投递"
+            else:
+                verdict = "成功"
             rows.append([
                 label,
                 MSGTYPE_LABELS.get(kind, kind),
-                "成功" if outcome.get("status") == "ok" else "失败",
+                verdict,
                 "、".join(outcome.get("msgids") or []) or (outcome.get("error") or "-")[:60],
             ])
         ok = not failures
@@ -2139,12 +2212,19 @@ class _NotifyRunner(object):
             {"type": "heading", "text": "运行日志"},
             {"type": "code", "text": self.log.text()},
         ]
+        delivery_states = [o.get("delivery_status") for _, _, o in outcomes]
         return {
             "status": "ok" if ok else "failed",
             "func": self.func,
             "batches_total": len(plans),
             "batches_ok": len([o for _, _, o in outcomes if o.get("status") == "ok"]),
             "msgids": msgids,
+            # 投递结论一并返回：调用方若用 func=test 做链路自检，只看 status 会把
+            # 「受理了但没人收到」当成成功（曾经就是这个坑）。
+            "delivery_ok": all(o.get("delivery_ok") is not False for _, _, o in outcomes),
+            "delivery_status": "/".join(s for s in delivery_states if s) or None,
+            "invalid_users": sorted({u for _, _, o in outcomes
+                                     for u in (o.get("invalid_users") or [])}),
             "error": failures[0] if failures else "",
             "ui": {"width": "wide", "layout": "stack", "components": components},
         }

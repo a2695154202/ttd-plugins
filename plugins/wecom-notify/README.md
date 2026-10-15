@@ -6,7 +6,7 @@
 （参考 <https://developer.work.weixin.qq.com/document>）。
 
 - **插件 id**：`wecom-notify`
-- **版本**：`1.0.0`
+- **版本**：`1.0.1`
 - **作者**：`a2695154202`
 - **入口**：`plugin.py`
 - **超时**：120 秒

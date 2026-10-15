@@ -48,7 +48,9 @@ TgtoDrive 的运行接口只把 `params` **原样**交给插件，**不会**把�
   `corp_id` / `agent_id` / `corp_secret` / `api_base` / `proxy_mode` / `touser` 等
   都从用户已保存的设置里取 —— 调用方既不需要、也不应该持有这些凭据；
 - **`func` 不参与补齐**：表单里通常存的是 `test`，若沿用它会让外部调用变成「发一条测试消息」，
-  因此 `func` 始终以调用方传入的为准（不传则默认 `send`）；
+  因此 `func` 始终以调用方传入的为准。⚠️ **请显式传 `func=send`**：平台会把清单所有 inputs
+  按默认值填齐，而 `func` 的清单默认值是 `test` —— 漏传时插件收到的是 `test`，
+  会发出两条内置测试消息（调用方同时传的 `content` 也会以测试形式发出）；
 - 运行日志会打印一行 `已从本插件已保存的设置（settings.json）补齐 N 项未传参数：…`，
   便于确认实际用了哪些值；
 - 若用户**从未保存过**凭据、调用方也没传，插件会明确报错
@@ -160,11 +162,13 @@ envelope 里的字段  >  其它传入参数（msgtype / touser / content / titl
 
 | 时机 | 由谁加载 | 加载什么 |
 | --- | --- | --- |
-| **本插件每次 `run()` 开始时**（也就是平台为本次调用新起的那个进程里） | **本插件自己** | `context["data_dir"]` 定位到的 `settings.json`（企业 ID / AgentId / Secret / 代理地址 / 收件人等），随后按需兜底读项目设置 |
+| **本插件每次 `run()` 开始时**（也就是平台为本次调用新起的那个进程里） | **本插件自己** | 由 `context["plugin_dir"]` 及其上级目录定位到的 `settings.json`（企业 ID / AgentId / Secret / 代理地址 / 收件人等），随后按需兜底读项目设置 |
 | 调用方进程内 | 不加载 | 调用方**不需要、也不应该**持有这些凭据；它只准备内容 |
 | 修改凭据后 | 需重新保存 | 设置以文件为准，下次 `run()` 时生效；界面改完点保存即可 |
 
-**关键点**：只有在**本插件自己的进程**里，才能拿到**本插件自己的 `data_dir`** —— 这是它读到自己配置的唯一途径。
+**关键点**：只有在**本插件自己的进程**里，才能读到它自己的设置文件 ——
+实际定位路径以代码 `_own_settings_candidates()` 为准（从 `context["plugin_dir"]`
+及其两级父目录里找 `settings.json`），这是它读到自己配置的唯一途径。
 这也决定了「被其他插件调用」必须走运行接口，而不是导入代码（见第十二节）。
 
 ---
@@ -245,7 +249,7 @@ def notify_via_wecom(content, title="TgtoDrive 通知", msgtype="text"):
 | `touser` | text | 成员 UserID，多个用 `\|` 分隔；`@all` 表示该应用全体可见成员 |
 | `toparty` / `totag` | text | 部门 ID / 标签 ID，`touser` 为 `@all` 时被忽略 |
 | `content` | textarea | `text` 的正文，也是 `news` 的描述。**`msgtype=text` + `func=send` 时必传**；`msgtype=news` 时可省略（描述改由 `card_content` 提供）；`func=test` 时可省略（用内置测试文本）。<br>注：正文按 2048 字节分段，中文约 680 字。 |
-| `card_content` | textarea | `news` 描述的备用来源（`content` 为空时使用）。三种写法：① 每行一条「键=值」（`=`、`:`、`：`、`\|` 分隔）；② 企业微信原生 JSON（含 `news` / `articles` 直接使用，含 `card_type` 自动转图文）；③ 省略。兼容旧字段名 `card_items` |
+| `card_content` | textarea | `news` 描述的备用来源（`content` 为空时使用）。三种写法：① 每行一条「键=值」（`=`、`:`、`：`、`\|` 分隔）；② 企业微信原生 JSON（含 `news` / `articles` 直接使用，含 `card_type` 自动转图文）；③ 省略。注：代码里还兼容旧字段名 `card_items`，但它**不在 inputs 清单里** —— 按上面第 1 条硬约束，经运行接口传它会被 400 拒绝；该兼容只对「从旧版 settings.json 合并注入」生效 |
 | `title` | text | `news` 的标题。企业微信侧上限 128 字节，**插件按 60 字符保守截断**并在日志说明；留空时取「渠道名称 + 通知」 |
 | `url` | text | `news` 的点击跳转链接；留空时回退官方站点（企业微信要求 `url` 与小程序二选一） |
 | `card_image` | text | `news` 的主图：http(s) 链接，**或容器内已存在的本地图片路径 / 内网地址**（后两者会先下载再上传换取企业微信可用 URL） |

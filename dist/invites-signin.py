@@ -6,7 +6,7 @@ PLUGIN_MANIFEST = {
   'schema_version': 1,
   'id': 'invites-signin',
   'name': '药丸论坛签到',
-  'version': '1.0.2',
+  'version': '1.0.3',
   'description': '药丸论坛（invites.fun）自动签到，结果可通知到 TgtoDrive 机器人或企业微信。',
   'author': 'a2695154202',
   'entry': 'plugin.py',
@@ -513,7 +513,7 @@ import json
 import os
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from pathlib import Path
 
@@ -539,9 +539,15 @@ NOTIFY_TITLE = "【💊药丸签到】任务完成"
 # 调用方式见该插件的 CALLING.md：POST /api/toolbox/plugins/wecom-notify/run
 WECOM_PLUGIN_ID = "wecom-notify"
 WECOM_TITLE = "【💊药丸签到】"
-# 提交任务后轮询结果的次数与间隔（拿不到 job_id 或超时都不影响签到本身）
-WECOM_JOB_POLL_ATTEMPTS = 3
-WECOM_JOB_POLL_INTERVAL = 2
+# 提交任务后轮询结果的次数与间隔（拿不到 job_id 或超时都不影响签到本身）。
+# 窗口约 57 秒：wecom-notify 一次 func=test 要间隔 3 秒连发两条、news 带图还要先
+# 下载再上传 —— 曾经 3 次 ×2 秒（约 4 秒）的窗口让正常成功也频繁落「未确认」，
+# 而「未确认」又被汇总显示成「已发送」，自相矛盾。
+WECOM_JOB_POLL_ATTEMPTS = 20
+WECOM_JOB_POLL_INTERVAL = 3
+# 提交重试（HTTP 503 队列忙）：wecom-notify 的调用文档要求调用方重试
+WECOM_SUBMIT_RETRY_ATTEMPTS = 3
+WECOM_SUBMIT_RETRY_INTERVAL = 3
 
 FUNC_LABELS = {
     "auto": "自动签到（Cookie 优先，失败回退账号密码）",
@@ -820,6 +826,11 @@ class _TtdClient(object):
                 headers={"Authorization": "Bearer " + self.token},
                 timeout=timeout,
                 allow_redirects=False,
+                # 必须显式禁用环境代理：ttd 通常是同容器 / 内网地址，而容器常配有
+                # 全局 HTTP(S)_PROXY（为访问 Telegram）—— 不显式禁掉的话，
+                # 对本机接口的调用会被丢进代理然后连接失败（requests 的 trust_env
+                # 默认 True，proxies=None 与不传等效）。两个键都要给。
+                proxies={"http": None, "https": None},
             )
         except Exception as exc:
             raise RuntimeError("调用 TgtoDrive 接口失败（%s）：%s" % (path, exc))
@@ -1102,11 +1113,18 @@ class _SigninRunner(object):
         兼容早期版本：旧清单只有 ``notify``（默认开）与 ``wecom_notify``（默认关）
         两个布尔开关，若参数里还带着它们，就按它们折算成新的渠道取值，
         这样早先保存下来的运行参数不会因为换字段而直接失效。
+
+        ⚠️ **「值合法」不等于「用户选过」**：平台会把清单所有 inputs 按默认值填齐，
+        ``notify_channels`` 的默认值是 ``tg``（非空）—— 曾经无条件信任合法值，
+        从旧清单升级来的用户（保存的是 ``notify=false`` 不通知）会被默认值悄悄顶成
+        「发 TG 通知」，静默开始推送，用户完全不知情。所以：**值等于清单默认值、
+        且参数里还带着旧字段**时，以旧字段为准（与 wecom-notify 的处理一致）。
         """
         text = str(value if value is not None else "").strip().lower()
-        if text in VALID_CHANNELS:
+        has_legacy = "notify" in self.p or "wecom_notify" in self.p
+        if text in VALID_CHANNELS and not (has_legacy and text == DEFAULT_CHANNEL):
             return text
-        if "notify" in self.p or "wecom_notify" in self.p:
+        if has_legacy:
             tg = _as_bool(self.p.get("notify"), True)
             wecom = _as_bool(self.p.get("wecom_notify"), False)
             if tg and wecom:
@@ -1254,7 +1272,11 @@ class _SigninRunner(object):
     def _proxies_arg(self):
         proxy = self._resolve_proxy()
         if not proxy:
-            return None
+            # 没解析到代理 = 用户要求直连。必须**显式传禁用字典**而不是 None：
+            # requests 的 trust_env 默认 True，proxies=None 与不传一样会读容器
+            # 的 HTTP_PROXY/HTTPS_PROXY —— 于是「没开代理」实际上还在走代理，
+            # 对 invites.fun 的访问会被中间设备打断，而日志还印着「未启用代理」。
+            return {"http": None, "https": None}
         return {"http": proxy, "https": proxy}
 
     def _http(self, method, url, headers=None, cookies=None, json_body=None,
@@ -1274,8 +1296,13 @@ class _SigninRunner(object):
                 }
                 if cookies:
                     kwargs["cookies"] = cookies
-                if proxies:
-                    kwargs["proxies"] = proxies
+                # curl_cffi 分支只传**真实代理**（禁用一个都不传）—— 它的 proxies
+                # 对 None 值的接受度与 requests 不同，这里保持改动前的行为，
+                # 避免在无法本地验证的路径上引入回归。标准 requests 分支才会显式
+                # 传禁用字典（见 _proxies_arg）。
+                real_proxies = {k: v for k, v in (proxies or {}).items() if v}
+                if real_proxies:
+                    kwargs["proxies"] = real_proxies
                 if json_body is not None:
                     kwargs["json"] = json_body
                 resp = curl_requests.request(method, url, **kwargs)
@@ -1307,8 +1334,11 @@ class _SigninRunner(object):
     # -- Cookie / 会话 -----------------------------------------------------
 
     def _remember_from_cookie(self):
-        match = REMEMBER_RE.search(self.cookie_raw or "")
-        return match.group(1).strip() if match else None
+        # 必须走 _parse_cookie_pair：SimpleCookie 会**解引号**（`"abc"` → `abc`），
+        # 而这里的 REMEMBER_RE 正则按 `[^;]+` 原样取。曾经两处解析结果不一致 ——
+        # 用户粘贴带引号的 cookie 时，mint session 的请求带着字面量引号被站点拒绝，
+        # 「刷新 flarum_session 失败」，auto 模式白白回退登录通道。
+        return self._parse_cookie_pair(self.cookie_raw).get("flarum_remember")
 
     @staticmethod
     def _parse_cookie_pair(cookie_str):
@@ -1501,8 +1531,18 @@ class _SigninRunner(object):
 
     @staticmethod
     def _is_today(state):
-        last = str((state or {}).get("lastCheckinTime") or "")
-        return bool(last and last.startswith(datetime.now().strftime("%Y-%m-%d")))
+        last = str((state or {}).get("lastCheckinTime") or "").strip()
+        if not last:
+            return False
+        # 站点时间戳可能是 UTC（Flarum 常序列化成 "+00:00"），容器按平台约定跑在
+        # Asia/Shanghai。曾经只按本地日期前缀比对：北京时间 00:00–08:00 之间 UTC
+        # 日期比本地少一天，恒判「不是今天」—— 签到 POST 成功也报「未确认今日已签到」，
+        # 且重试救不回来（before 状态同样判不出 today，重复 POST 被站点拒绝）。
+        # 这里**本地 / UTC 两种解释都认**：宁可把「昨天深夜 UTC（= 今天凌晨本地）」
+        # 算成今天，也不错杀真正今天的签到。
+        today_local = datetime.now().strftime("%Y-%m-%d")
+        today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return last.startswith(today_local) or last.startswith(today_utc)
 
     @staticmethod
     def _error_from(resp):
@@ -1568,6 +1608,15 @@ class _SigninRunner(object):
             return {"ok": False, "reason": "HTTP %s：%s" % (resp.status, detail)}
 
         state = self._extract_state(resp.json_data or {})
+        # **HTTP 200 也要回查兜底**，与「非 200」分支对齐：站点改版、字段缺失、
+        # 响应结构变化时，200 里可能什么有效信息都没有 —— 曾经这里直接判失败，
+        # 于是「签到其实成功了（HTTP 200）却推送签到失败通知」，还白白多跑几轮。
+        # 判失败前先问一次站点状态，它说今天已签到就认。
+        if not state or state.get("canCheckin") is not False or not self._is_today(state):
+            after = self._fetch_state(session)
+            if after and after.get("canCheckin") is False and self._is_today(after):
+                self.log.info("签到响应未确认，但站点状态显示今日已签到，按成功处理")
+                return {"ok": True, "already": True, "state": after, "channel": channel}
         if not state:
             return {"ok": False, "reason": "签到响应缺少用户状态数据"}
         if state.get("canCheckin") is not False or not self._is_today(state):
@@ -1628,11 +1677,22 @@ class _SigninRunner(object):
         cutoff = datetime.now() - timedelta(days=self.history_days)
         kept = []
         for record in records:
+            # **按天比较，不做严格 strptime**：同一个 lastCheckinTime 字段，
+            # _is_today 只比对日期前缀（格式无关），这里却要求 "%Y-%m-%d %H:%M:%S"
+            # 空格分隔 —— 站点一旦返回 ISO 的 "2026-10-15T08:05:00+00:00"（带 T），
+            # 每条新记录都被静默剔除，「查看签到历史」永远显示「暂无记录」。
+            # 解析不出日期时**保留**（宁可多留一条，也不错杀刚写入的记录）。
+            stamp = str(record.get("date") or "")[:19].replace("T", " ")
             try:
-                if datetime.strptime(str(record["date"])[:19], "%Y-%m-%d %H:%M:%S") >= cutoff:
-                    kept.append(record)
+                when = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S")
             except Exception:
-                continue
+                try:
+                    when = datetime.strptime(stamp[:10], "%Y-%m-%d")
+                except Exception:
+                    kept.append(record)
+                    continue
+            if when >= cutoff:
+                kept.append(record)
         kept.sort(key=lambda r: str(r.get("date") or ""), reverse=True)
         self._save_history(kept)
         return kept
@@ -1664,7 +1724,11 @@ class _SigninRunner(object):
         self.log.info("使用通知机器人「%s」（列表第 %s 项，来源 %s）"
                       % (bot.get("name"), bot.get("index"), bot.get("source") or "-"))
         proxy = bot.get("proxy") or self._resolve_proxy()
-        proxies = {"http": proxy, "https": proxy} if proxy else None
+        # 没代理时显式禁用环境代理：api.telegram.org 在国内网络常被重置，
+        # 而容器环境变量里的代理未必能出网 —— 不显式禁掉就会「以为在直连、
+        # 其实在走坏代理」，与「未启用代理」的日志自相矛盾。
+        proxies = {"http": proxy, "https": proxy} if proxy \
+            else {"http": None, "https": None}
         text = "%s\n%s" % (NOTIFY_TITLE, body)
 
         try:
@@ -1726,6 +1790,12 @@ class _SigninRunner(object):
         base = str(self.tgto_base_url or os.environ.get("TGTO_OPENAPI_BASE_URL", "")).strip()
         token = str(self.tgto_token or os.environ.get("TGTO_OPENAPI_TOKEN", "")).strip()
         base = base.rstrip("/")
+        if token and not base:
+            # 与 _TtdClient 一致：只填了令牌时按同容器默认地址兜底 ——
+            # 否则同容器部署下「TG 通知正常、微信永远提示未配置地址」，
+            # 同一份配置两条通道结论相反，排错时极具迷惑性。
+            base = _TtdClient.DEFAULT_BASE
+            self.log.info("未填写 TgtoDrive 地址，按同容器默认值使用 %s" % base)
         if not base or not token:
             self.log.warn("「通知渠道」包含企业微信，但未配置「TgtoDrive 地址」或「OpenAPI 令牌」，"
                           "本次跳过微信通知（见「接口与诊断」页签）")
@@ -1750,20 +1820,35 @@ class _SigninRunner(object):
 
         url = "%s/api/toolbox/plugins/%s/run" % (base, WECOM_PLUGIN_ID)
         self.log.info("调用「%s」插件发送微信通知（%s 类型）" % (WECOM_PLUGIN_ID, self.wecom_msgtype))
-        try:
-            import requests
+        resp = None
+        for attempt in range(WECOM_SUBMIT_RETRY_ATTEMPTS):
+            if attempt:
+                # 503 = 插件队列已满 / 对方有未完成任务。wecom-notify 的调用文档
+                # 明确要求「调用方收到 503 时重试」—— 曾经没有重试分支，并发场景
+                # （定时任务与手动运行撞车、连点测试）下微信通知直接丢失。
+                self.log.info("目标插件队列忙（HTTP 503），%d 秒后重试（第 %d/%d 次）"
+                              % (WECOM_SUBMIT_RETRY_INTERVAL, attempt + 1,
+                                 WECOM_SUBMIT_RETRY_ATTEMPTS))
+                time.sleep(WECOM_SUBMIT_RETRY_INTERVAL)
+            try:
+                import requests
 
-            resp = requests.post(
-                url,
-                headers={"Authorization": "Bearer %s" % token},
-                json={"params": params},
-                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
-                allow_redirects=False,
-            )
-        except Exception as exc:
-            self.log.warn("调用企业微信通知插件失败：%s" % exc)
-            self._wecom_state = "call-error"
-            return False
+                resp = requests.post(
+                    url,
+                    headers={"Authorization": "Bearer %s" % token},
+                    json={"params": params},
+                    timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+                    allow_redirects=False,
+                    # ttd 通常是同容器 / 内网地址，必须显式禁用环境代理
+                    # （容器里的全局代理是给 Telegram 出的，会把内网请求打断）
+                    proxies={"http": None, "https": None},
+                )
+            except Exception as exc:
+                self.log.warn("调用企业微信通知插件失败：%s" % exc)
+                self._wecom_state = "call-error"
+                return False
+            if resp.status_code != 503:
+                break
 
         if resp.status_code not in (200, 201, 202):
             hint = ""
@@ -1777,7 +1862,8 @@ class _SigninRunner(object):
                         "card_content 输入。请到插件市场把「企业微信通知」更新到最新版）"
                         % WECOM_PLUGIN_ID)
             self.log.warn("调用企业微信通知插件失败：HTTP %s%s｜%s"
-                          % (resp.status_code, hint, (resp.text or "")[:160]))
+                          % (resp.status_code, hint,
+                             scrub_text((resp.text or "")[:160], [token])))
             self._wecom_state = "http-%s" % resp.status_code
             return False
 
@@ -1886,7 +1972,9 @@ class _SigninRunner(object):
 
                 resp = requests.get(url, headers=headers,
                                     timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
-                                    allow_redirects=False)
+                                    allow_redirects=False,
+                                    # 同容器 / 内网地址：显式禁用环境代理
+                                    proxies={"http": None, "https": None})
                 data = resp.json() or {}
             except Exception:
                 continue
@@ -2122,13 +2210,23 @@ class _SigninRunner(object):
         ]
 
     def _notify_summary(self):
-        """一句话概括本次通知结果，用于指标卡。"""
+        """一句话概括本次通知结果，用于指标卡。
+
+        **pending（未确认）不能算 ✔**：任务还在后台跑、结果没取到，与「已发送」
+        是两回事。曾经把 pending 与 sent 同等计成 ✔，指标卡显示「微信 ✔ 已发送」，
+        同一页的明细表却写着「已提交（后台执行，未确认结果）」—— 自相矛盾，
+        而测试通知的唯一用途就是验证链路，更不能把「没确认」显示成「已发送」。
+        """
         parts = []
         if self.notify_tg:
             parts.append("TG %s" % ("✔" if self._tg_state == "sent" else "✘"))
         if self.notify_wecom:
-            parts.append("微信 %s" % ("✔" if self._wecom_state in ("sent", "submitted", "pending")
-                                     else "✘"))
+            if self._wecom_state in ("sent", "submitted"):
+                parts.append("微信 ✔")
+            elif self._wecom_state == "pending":
+                parts.append("微信 ❓ 未确认")
+            else:
+                parts.append("微信 ✘")
         if not parts:
             return "未发送"
         return " / ".join(parts)
@@ -2336,20 +2434,31 @@ class _SigninRunner(object):
         elif self.notify_tg:
             self.log.warn("Telegram 测试通知未发送（%s）" % notify_state)
 
-        wecom_ok = self._wecom_state in ("sent", "submitted", "pending")
+        # pending（任务在后台跑、结果没取到）**不算已发送**：曾经把它与 sent
+        # 同等计成 ✔，测试通知弹「✅ 已发送」，同一页明细却写着「未确认结果」。
+        # 测试通知的唯一用途就是验证链路，不能把「没确认」显示成「已发送」。
+        wecom_ok = self._wecom_state in ("sent", "submitted")
+        wecom_pending = self._wecom_state == "pending"
         ok_any = bool(notified or wecom_ok)
         rows = self._common_rows() + [
-            ["测试结果", "至少一条渠道发送成功" if ok_any else "没有任何渠道发送成功"],
+            ["测试结果", "至少一条渠道发送成功" if ok_any
+             else ("有渠道结果未确认（任务仍在后台执行）" if wecom_pending
+                   else "没有任何渠道发送成功")],
         ]
         if ok_any:
             status_component = {"type": "alert", "text": "✅ 测试通知已发送",
                                 "style": {"tone": "success"}}
+        elif wecom_pending:
+            status_component = {"type": "alert",
+                                "text": "❓ 测试通知已提交，但还没确认到结果（任务仍在后台执行）",
+                                "style": {"tone": "warning"}}
         else:
             status_component = {"type": "alert", "text": "⚠️ 测试通知未发送",
                                 "style": {"tone": "warning"}}
         stats = [
             ("Telegram 通知", "✔ 已发送" if notified else "✘ 未发送"),
-            ("企业微信通知", "✔ 已发送" if wecom_ok else "✘ 未发送"),
+            ("企业微信通知", "✔ 已发送" if wecom_ok
+             else ("❓ 未确认" if wecom_pending else "✘ 未发送")),
         ]
         ui = self._base_ui(status_component, rows, table_label="测试通知详情", stats=stats)
         return {
@@ -2496,30 +2605,35 @@ class _SigninRunner(object):
         if not use_cookie and not use_login:
             raise ValueError("Cookie 与账号密码均未配置，无法执行签到")
 
-        last_reason = "未知原因"
+        # 两个通道的失败原因都要留下：曾经后一个通道无条件覆盖 last_reason，
+        # 「Cookie 过期（根因）+ 密码错误」时只显示密码错误，用户反复改密码也修不好。
+        reasons = []
         for attempt in range(1, self.retry_count + 1):
             self.log.info("第 %d/%d 次签到尝试" % (attempt, self.retry_count))
+            reasons = []
 
             if use_cookie:
                 result = self._checkin_with_cookie()
                 if result.get("ok"):
                     return self._result_success(result, "Cookie")
-                last_reason = result.get("reason") or "Cookie 通道失败"
-                self.log.warn("Cookie 通道失败：%s" % last_reason)
+                reasons.append("Cookie 通道：%s"
+                               % (result.get("reason") or "失败（未说明原因）"))
+                self.log.warn("Cookie 通道失败：%s" % reasons[-1])
 
             if use_login:
                 result = self._checkin_with_login()
                 if result.get("ok"):
                     return self._result_success(result, "账号密码登录")
-                last_reason = result.get("reason") or "登录通道失败"
-                self.log.warn("账号密码登录通道失败：%s" % last_reason)
+                reasons.append("账号密码登录通道：%s"
+                               % (result.get("reason") or "失败（未说明原因）"))
+                self.log.warn("账号密码登录通道失败：%s" % reasons[-1])
 
             if attempt < self.retry_count and self.retry_interval > 0:
                 self.log.info("%d 秒后进入第 %d 次重试" % (self.retry_interval, attempt + 1))
                 time.sleep(self.retry_interval)
 
         self.log.error("已重试 %d 次仍未成功" % self.retry_count)
-        return self._result_failed(last_reason)
+        return self._result_failed("；".join(reasons) if reasons else "未知原因")
 
     def _result_success(self, result, channel_label):
         state = result.get("state") or {}

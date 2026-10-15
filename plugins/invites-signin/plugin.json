@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "invites-signin",
   "name": "药丸论坛签到",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "药丸论坛（invites.fun）自动签到，结果可通知到 TgtoDrive 机器人或企业微信。",
   "author": "a2695154202",
   "entry": "plugin.py",

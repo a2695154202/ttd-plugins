@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "wecom-call-demo",
   "name": "微信通知调用示例",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "演示插件互相调用：调用「企业微信通知」插件发送消息。",
   "author": "a2695154202",
   "entry": "plugin.py",

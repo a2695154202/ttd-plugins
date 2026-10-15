@@ -14,11 +14,11 @@
 
 | 插件 | 版本 | 说明 | 文档 |
 | --- | --- | --- | --- |
-| **药丸论坛签到**<br>`invites-signin` | 1.0.2 | 药丸论坛（invites.fun）自动签到，结果可通知到 TgtoDrive 机器人或企业微信。 | [README](plugins/invites-signin/README.md) |
-| **企业微信通知**<br>`wecom-notify` | 1.0.0 | 向企业微信发送应用消息（文本 / 图文），可被其他插件调用。 | [README](plugins/wecom-notify/README.md) |
-| **微信通知调用示例**<br>`wecom-call-demo` | 1.0.0 | 演示插件互相调用：调用「企业微信通知」插件发送消息。 | [README](plugins/wecom-call-demo/README.md) |
-| **TTD每日推送**<br>`ttd-daily-digest` | 1.0.0 | 把 TgtoDrive 的媒体库数据汇总成一条日报，推送到 Telegram 或企业微信。 | [README](plugins/ttd-daily-digest/README.md) |
-| **剧集缺集检测与补齐**<br>`missing-episodes` | 1.0.0 | 比对本地剧集与 TMDB 应有的季集找出缺集，并按你的配置搜索补齐（默认只记录，不写盘）。 | [README](plugins/missing-episodes/README.md) |
+| **药丸论坛签到**<br>`invites-signin` | 1.0.3 | 药丸论坛（invites.fun）自动签到，结果可通知到 TgtoDrive 机器人或企业微信。 | [README](plugins/invites-signin/README.md) |
+| **企业微信通知**<br>`wecom-notify` | 1.0.1 | 向企业微信发送应用消息（文本 / 图文），可被其他插件调用。 | [README](plugins/wecom-notify/README.md) |
+| **微信通知调用示例**<br>`wecom-call-demo` | 1.0.1 | 演示插件互相调用：调用「企业微信通知」插件发送消息。 | [README](plugins/wecom-call-demo/README.md) |
+| **TTD每日推送**<br>`ttd-daily-digest` | 1.0.1 | 把 TgtoDrive 的媒体库数据汇总成一条日报，推送到 Telegram 或企业微信。 | [README](plugins/ttd-daily-digest/README.md) |
+| **剧集缺集检测与补齐**<br>`missing-episodes` | 1.0.1 | 比对本地剧集与 TMDB 应有的季集找出缺集，并按你的配置搜索补齐（默认只记录，不写盘）。 | [README](plugins/missing-episodes/README.md) |
 
 上面每行只写一句话，**完整功能、参数与排错请点右侧 README**。
 

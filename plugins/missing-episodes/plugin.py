@@ -22,12 +22,26 @@
    或用户自建的**盘搜（PanSou）**实例（默认端口 8888），或两者都查。
 
 **补齐动作**（默认最保守）：
-`record` 仅记录并列出链接 → `transfer` 转存到网盘 → `offline` 提交磁力/电驴离线下载。
+`record` 仅记录并列出链接 → `transfer` 转存到网盘 → `offline` 提交磁力/电驴/种子离线下载。
+其中 `transfer` 遇到磁力 / 电驴 / 种子候选时**不跳过**，自动改走 TTD 的离线下载接口
+（`/api/media/resources/offline` 的 `link` 字段专收这类链接；目标网盘的离线设置已在
+TgtoDrive 侧配好，插件只负责提交）；`offline` 遇到网盘分享链接才跳过（该接口收不了）。
+**两个接口的 `provider` 语义相反，别搞混**：offline 的 provider = 任务落地的**目标网盘**；
+transfer 的 provider = 分享链接**所属网盘（源）**，转存目标由 TTD 影视设置决定
+（曾把目标当源传给 transfer，TTD 一律 409 SHARE_PROVIDER_MISMATCH）。
+115 对重复提交同一条磁力 / 种子返回 502「任务已存在」—— 按已提交记账（资源早已在离线队列），
+不当失败报。
 默认 **dry_run=True**：只打印「将要做什么」，不真正执行；转存/离线会真实写网盘、
 消耗网盘额度，务必先跑 dry-run 确认。
 
 实现上遵循本仓库既有约定：模块导入阶段不发网络请求、每次请求都设超时、
 凭据一律脱敏、任务结果逐层下沉后再判读（任务查询接口无响应 schema）。
+
+**运行结果通知**：每次检测 / 补齐跑完后，把结果整理成固定三类推给用户勾选的渠道 ——
+① 缺失集的剧集、② 被成功补全的剧集、③ 补全失败 / 未补全的（含「只补全一部分」的，
+带 `⚠️【部分补全】` 文字标记）。渠道做法沿用仓库约定：Telegram 读 ttd 已配置的通知机器人后
+直连 Bot API；微信把内容交给「企业微信通知」插件（凭据由它保管）。两个渠道各自独立发送、
+各自报告结果，通知失败**不影响**本次结果页。默认一个渠道都不勾（不发送）。
 """
 
 import json
@@ -115,17 +129,45 @@ PROXY_LAYER_STATUS = (407, 502, 503, 504, 520, 521, 522, 523, 524)
 # 导致整个结果页看不到 —— 必须自己截断并说明。
 MAX_TABLE_ROWS = 200
 
+# -- 运行结果通知 -----------------------------------------------------------
+# 每次运行后（check / fill）把结果整理成三类推到用户勾选的渠道：
+#   ① 缺失集的剧集  ② 被成功补全的剧集  ③ 补全失败（含「只补全一部分」的，需文字标记）
+# 渠道做法沿用本仓库既有约定：
+#   * Telegram —— 读 ttd 已配置的通知机器人（`GET /api/notify-bots`）后直连 Bot API
+#     `sendMessage`，机器人 Token / 推送目标都从 ttd 读，**不落在本插件里**；
+#   * 微信 —— 把内容交给「企业微信通知」插件（默认 `wecom-notify`），
+#     企业 ID / Secret / 收件人全部由它保管，本插件不持有这些凭据。
+CH_TG = "tg"
+CH_WECOM = "wecom"
+VALID_CHANNELS = (CH_TG, CH_WECOM)
+CHANNEL_LABELS = {CH_TG: "Telegram", CH_WECOM: "微信"}
+
+TELEGRAM_API = "https://api.telegram.org"
+
+# 通知正文上限：企业微信文本消息单条约 2048 字节，Telegram 单条 4096 字符。
+# 通知只给「概览 + 前 N 条」，完整清单留在 ttd 结果页 —— 太长的正文既不便阅读，
+# 也容易被目标端截断或分段。
+NOTIFY_MAX_CHARS = 3200
+NOTIFY_MAX_ITEMS = 20
+DEFAULT_WECOM_PLUGIN_ID = "wecom-notify"
+
 # 执行功能
 FUNC_CHECK = "check"
 FUNC_FILL = "fill"
 FUNC_TEST = "test"
 FUNC_CONFIG = "config"
-VALID_FUNCS = (FUNC_CHECK, FUNC_FILL, FUNC_TEST, FUNC_CONFIG)
+# 「从头开始」：只清空扫描进度（`scan_cursor.json`），**不运行检测、不补齐**、也不发通知。
+# 为什么要有这个入口：进度游标是「上次扫到哪」的唯一状态，媒体库删改过、换过媒体库、
+# 或单纯想重新做一轮完整扫描时，用户需要一个**明确且无副作用**的方式把它归零 ——
+# 否则只能自己进容器找 data_dir 删文件。它不读 Emby / TgtoDrive，所以配置有问题时也能用。
+FUNC_RESET = "reset"
+VALID_FUNCS = (FUNC_CHECK, FUNC_FILL, FUNC_TEST, FUNC_CONFIG, FUNC_RESET)
 FUNC_LABELS = {
     FUNC_CHECK: "仅检测缺失（只读）",
     FUNC_FILL: "检测并补齐",
     FUNC_TEST: "测试连接",
     FUNC_CONFIG: "查看生效配置",
+    FUNC_RESET: "从头开始（清空扫描进度）",
 }
 
 # 补齐动作
@@ -136,7 +178,7 @@ VALID_ACTIONS = (ACTION_RECORD, ACTION_TRANSFER, ACTION_OFFLINE)
 ACTION_LABELS = {
     ACTION_RECORD: "仅记录并列出链接",
     ACTION_TRANSFER: "转存到网盘",
-    ACTION_OFFLINE: "提交离线下载（磁力 / 电驴）",
+    ACTION_OFFLINE: "提交离线下载（磁力 / 电驴 / 种子）",
 }
 
 # 搜索源
@@ -155,10 +197,95 @@ PANSOU_CLOUD_LABELS = {
     "baidu": "百度网盘", "aliyun": "阿里云盘", "quark": "夸克", "guangya": "光鸭",
     "tianyi": "天翼", "uc": "UC", "mobile": "移动", "115": "115",
     "pikpak": "PikPak", "xunlei": "迅雷", "123": "123", "magnet": "磁力",
-    "ed2k": "电驴", "others": "其他",
+    "ed2k": "电驴", "torrent": "种子", "others": "其他",
 }
-# 可直接丢给「离线下载」的链接类型
-OFFLINE_TYPES = ("magnet", "ed2k")
+# 「离线下载」接口专收的链接类型：磁力 / 电驴 / 种子。
+# TTD 的离线接口文档原话是「将磁力或其他受支持的离线链接提交到所选网盘的指定目录」——
+# 目标网盘（115）的离线设置已在 TTD 侧配好，插件只负责提交。
+# 种子除了类型名，还可能以 .torrent 后缀的 http 链接出现（盘搜会归到 others），
+# 所以判定要走 _is_offline_link()，不能只看类型名。
+OFFLINE_TYPES = ("magnet", "ed2k", "torrent")
+
+
+def _is_offline_link(url, kind=""):
+    """判断一条候选是不是「磁力 / 电驴 / 种子」这类**离线下载链接**。
+
+    三条判定路径，宁多认不少认（认成种子顶多多试一次接口，漏认就直接跳过用户唯一可用的资源）：
+    ① 类型名命中 `OFFLINE_TYPES`（含 bt / seed 别名）；
+    ② URL 是 `magnet:` / `ed2k:` 协议；
+    ③ URL 以 `.torrent` 结尾（盘搜把种子归到 others 时就靠这条兜底）。
+    """
+    low_kind = str(kind or "").strip().lower()
+    if low_kind in OFFLINE_TYPES or low_kind in ("bt", "seed"):
+        return True
+    low_url = str(url or "").strip().lower()
+    if low_url.startswith(("magnet:", "ed2k:")):
+        return True
+    return low_url.endswith(".torrent")
+
+
+# 转存接口的 `provider` 要传**分享链接所属网盘**（源），取值就是盘搜的网盘类型。
+# ⚠️ 不是转存目标网盘 —— 2026-10-15 实测：把目标（115）当 provider 传，TTD 一律
+# 409 SHARE_PROVIDER_MISMATCH「分享链接实际为光鸭链接，…」（它按 URL 认出了链接
+# 的真实网盘，与提交的 provider 不符）。转存目标由 TTD 自己的影视设置
+# （target_provider）决定，这个接口不需要、也不能传。
+# magnet / ed2k / torrent 走离线接口，永远到不了转存；others / 未知类型不传，
+# 让 TTD 按 URL 自动识别（它的报错原文证明它本来就认得出）。
+TRANSFER_SOURCE_PROVIDERS = tuple(
+    key for key in PANSOU_CLOUD_LABELS
+    if key not in OFFLINE_TYPES and key != "others")
+
+
+def _api_error_brief(text, limit=160):
+    """把接口的错误响应压成**可读的一行**。
+
+    TTD 的错误体是 ``{"code": "...", "error": "中文说明"}``，直接贴原文会看到
+    `\\u4efb\\u52a1...` 这种转义码，用户读不出所以然。这里解析出 code/error
+    拼成「code：中文说明」；不是 JSON 就退回原文前 `limit` 字。
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return "（接口未返回内容）"
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return raw[:limit]
+    if isinstance(data, dict):
+        code = str(data.get("code") or "").strip()
+        error = str(data.get("error") or data.get("message") or "").strip()
+        if code or error:
+            return ("%s：%s" % (code, error) if code and error else (code or error))[:limit]
+    return raw[:limit]
+
+
+def _is_duplicate_offline_error(status, data, text):
+    """判断离线下载的失败是不是「115 任务已存在」。
+
+    115 对**重复提交同一条磁力 / 电驴 / 种子**返回 502 +
+    ``{"code":"115_OFFLINE_FAILED","error":"任务已存在，请勿输入重复的任务"}``。
+    这不是失败：资源此前已经提交进 115 的离线队列了（本插件多跑几次就会撞上）。
+    报成失败会让用户以为没补上，其实 115 那边早就有了 —— 按「已提交」记账，
+    但在说明里写清楚「未重复创建」。
+    """
+    code, error = "", ""
+    if isinstance(data, dict):
+        code = str(data.get("code") or "")
+        error = str(data.get("error") or "")
+    if not code and not error:
+        error = str(text or "")[:300]      # data 没解析出来时退回原文
+    if "任务已存在" in error or "重复" in error:
+        return True
+    return code == "115_OFFLINE_FAILED" and ("已存在" in error or "重复" in error)
+
+# 补齐动作的**真实执行结论**（_apply_action 返回，_fill_one 记账，_notify_items 分类）。
+# 曾经在这里栽过：entry["status"] 在调 _apply_action **之前**就被无条件写成 done，
+# 于是「候选是磁力→跳过」「接口报错→失败」也统统算进「② 被成功补全」——
+# 用户收到微信以为补齐了，实际网盘里什么都没有。分类只能按真实结论走。
+ACT_DONE = "done"          # 真正执行成功（转存 / 离线已提交；仅记录模式 = 链接已列出）
+ACT_SKIPPED = "skipped"    # 候选类型与动作不匹配，什么也没做（如转存动作选中磁力）
+ACT_FAILED = "failed"      # 执行了，但接口返回错误
+ACT_PREVIEW = "preview"    # dry-run：预告将执行，并未真正执行
+ACT_NOOP = "noop"          # 兜底：没有可执行的分支
 
 # 本插件**只处理剧集**。Emby 的媒体库会带 CollectionType，这里显式排除非剧集库：
 # 电影、音乐、音乐视频、有声书、书籍、家庭视频、合集、照片、游戏、播放列表。
@@ -246,6 +373,20 @@ def _as_bool(value, default=False):
     if text in ("0", "false", "no", "off", "n", "否", "假"):
         return False
     return default
+
+
+def _as_list(value):
+    """把「多选」类参数归一化成字符串列表。
+
+    平台把多选值以**列表**传来，但定时计划 / 手工调用可能给单个字符串或 ``None``；
+    另外值里可能混着空白项。这里统一成「去空白、丢空项」的列表，调用方不必再判类型。
+    """
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if value in (None, ""):
+        return []
+    text = str(value).strip()
+    return [text] if text else []
 
 
 def _finite_int(value):
@@ -474,6 +615,131 @@ def _requests_proxies(proxy):
     return {"http": None, "https": None}
 
 
+# ---------------------------------------------------------------------------
+# 通知相关的小工具（机器人采集 / 任务结果下沉 / 代理脱敏）
+# ---------------------------------------------------------------------------
+
+def _mask_proxy(value):
+    """代理地址脱敏：保留协议与主机，把可能存在的账号密码抹成 ``***``。"""
+    text = str(value or "")
+    if "@" in text:
+        scheme, sep, rest = text.partition("://")
+        if sep and rest:
+            return "%s://***@%s" % (scheme, rest.split("@", 1)[1])
+    return text
+
+
+def _is_primary_name(name):
+    """判断某个机器人是不是「主机器人」（ttd 允许给机器人起备注名）。"""
+    text = str(name or "").strip().lower()
+    return text in ("主", "主机器人", "main", "primary", "默认", "default") or "主" in text
+
+
+def _collect_bots(payload, source):
+    """从 `/api/notify-bots`（或 `/api/proxy_settings`）的响应里启发式找出 Telegram 机器人。
+
+    该接口在规范里标 ``generic``（响应无 schema），历史上出现过几种形态：顶层列表、
+    ``data.list`` / ``settings`` 包裹、扁平对象。这里一律兼容，并返回
+    ``(可用机器人, 被跳过的条目名)`` —— 跳过的名字要能在日志里说明，
+    否则用户会以为「配了机器人却没读到」是插件坏了。
+    """
+    bots, skipped = [], []
+
+    def consider(node, index):
+        if not isinstance(node, dict):
+            return
+        name = None
+        for key in ("name", "remark", "title", "label", "bot_name"):
+            value = node.get(key)
+            if isinstance(value, str) and value.strip():
+                name = value.strip()
+                break
+        token = None
+        for key in ("token", "bot_token", "botToken", "tg_token", "telegram_token"):
+            value = node.get(key)
+            if isinstance(value, str) and value.strip():
+                token = value.strip()
+                break
+        chat_id = None
+        for key in ("chat_id", "chatId", "user_id", "admin_user_id", "target",
+                    "target_id", "to", "receiver"):
+            value = node.get(key)
+            if value not in (None, "") and not isinstance(value, (dict, list)):
+                chat_id = str(value).strip()
+                break
+        proxy = None
+        for key in ("proxy", "proxy_url", "proxyUrl"):
+            value = node.get(key)
+            if isinstance(value, str) and value.strip():
+                proxy = value.strip()
+                break
+        kind = str(node.get("type") or node.get("bot_type")
+                   or node.get("provider") or "").strip().lower()
+        if not name:
+            name = "机器人 %d" % index
+        if not token or not chat_id:
+            skipped.append(name)
+            return
+        # 类型明确写着非 Telegram（企业微信等）的条目排除掉
+        if kind and ("wecom" in kind or "wechat" in kind or "work" in kind
+                     or "qy" in kind):
+            skipped.append(name)
+            return
+        if ":" not in token:
+            # Telegram bot token 形如 ``123456:ABC-DEF…``，不带冒号的通常不是
+            skipped.append(name)
+            return
+        bots.append({"name": name, "token": token, "chat_id": chat_id,
+                     "proxy": proxy, "type": kind, "source": source})
+
+    if isinstance(payload, list):
+        for index, node in enumerate(payload, 1):
+            consider(node, index)
+    elif isinstance(payload, dict):
+        candidates = []
+        for key in ("list", "bots", "items", "data", "settings", "notify_bots"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                candidates = value
+                break
+            if isinstance(value, dict):
+                for inner_key in ("list", "bots", "items"):
+                    if isinstance(value.get(inner_key), list):
+                        candidates = value[inner_key]
+                        break
+                if candidates:
+                    break
+        if not candidates and any(
+                isinstance(payload.get(k), str) and payload.get(k)
+                for k in ("token", "bot_token", "botToken")):
+            candidates = [payload]
+        for index, node in enumerate(candidates, 1):
+            consider(node, index)
+    return bots, skipped
+
+
+def descend_result(data, depth=5):
+    """把插件任务查询响应一路下沉到**最内层**的结果对象。
+
+    ``GET /api/toolbox/plugins/jobs/{id}`` 没有响应 schema，任务对象可能被包在
+    ``result`` / ``job`` / ``data`` / ``task`` 里的任意一层（甚至多层）。只取一层会读到
+    「包裹本身」，把 ``delivery_ok`` 这类字段全丢掉 —— 仓库里曾因此把「没送达」显示成
+    「已发送」。这里逐层下沉到底，并用层数上限防止自引用。
+    """
+    node = data if isinstance(data, dict) else {}
+    for _ in range(depth):
+        child = None
+        for key in ("result", "job", "data", "task"):
+            value = node.get(key)
+            if isinstance(value, dict) and value:
+                child = value
+                break
+        if child is None:
+            break
+        node = child
+    return node
+
+
 
 def _url_seg(value):
     """把值安全地放进 URL 的**路径段**。
@@ -540,6 +806,11 @@ FALLBACK_INPUT_DEFAULTS = {
     "tmdb_language": DEFAULT_TMDB_LANGUAGE,
     "tmdb_proxy": "",
     "tmdb_proxy_mode": TMDB_PROXY_AUTO,
+    # 运行结果通知：默认一个都不勾（不改变已有用户的行为）
+    "notify_channels": [],
+    "notify_bot": 0,
+    "wecom_plugin_id": DEFAULT_WECOM_PLUGIN_ID,
+    "wecom_touser": "",
 }
 
 
@@ -619,6 +890,142 @@ def _is_relevant(candidate, title):
     if not note or not key_tokens:
         return True
     return any(tok in note for tok in key_tokens)
+
+
+# ---------------------------------------------------------------------------
+# 「这个资源包到底覆盖了哪些集」
+# ---------------------------------------------------------------------------
+# 搜索源返回的候选里既有**单集**、也有**部分集**、也有**整季包**。不带判断地挑一个就执行，
+# 很容易挑到根本不含缺失集的包（例如缺 E04-E12，却选中了「S01E01」）—— 转存它会白白占用
+# 网盘、消耗会员点数，而且结果页还显示「已提交」，用户以为补上了。
+#
+# 判断依据只有候选的标题 / 描述文本（`note`），所以结论分三态：
+#   * 明确是整季 / 全集包 → 视为覆盖**全部**缺失集；
+#   * 明确列出了集号     → 取它与缺失集的**交集**（单集也走这条）；
+#   * 认不出来           → **绝不能当成「不覆盖」**（保守放行，只标注「覆盖未知」）。
+# 只有「明确列出集号、且与缺失集无交集」才判定为「不含缺失集」并排除。
+
+# 先剔除**带数字的画质 / 编码 / 年份噪声**，否则「全1080P」会被当成「第 1080 集」、
+# 「2019」会被当成「第 2019 集」。只剔数字型噪声，非数字的（hevc / web-dl）不影响集号识别。
+_QUALITY_NOISE_RE = re.compile(
+    r"(?i)(?:(?<!\d)(?:2160|1440|1080|720|576|480)\s*p(?![a-z0-9])|"
+    r"(?<!\d)[48]\s*k(?![a-z0-9])|"
+    r"(?<!\d)\d{1,2}\s*bit(?![a-z0-9])|"
+    r"(?<!\d)\d{2,3}\s*fps(?![a-z0-9])|"
+    r"(?<!\d)x26[45](?!\d)|(?<!\d)h\.?26[45](?!\d)|(?<!\d)hdr10(?!\d)|"
+    r"(?<!\d)(?:19|20)\d{2}(?!\d))")
+
+# 「第01-12集」「01-12集」「第01集-第12集」「更新至第10集」
+_EP_RANGE_CN_RES = (
+    re.compile(r"第?\s*(\d{1,4})\s*[-~～－—–至到]\s*第?\s*(\d{1,4})\s*[集话話期]"),
+    re.compile(r"第?\s*(\d{1,4})\s*[集话話期]\s*[-~～－—–至到]\s*第?\s*(\d{1,4})\s*[集话話期]"),
+)
+# 「E01-E12」「EP01-12」，以及带季号的「S01E01-E06」
+# 前面的否定断言只排除**字母**（不能用 `[a-z0-9]`）—— 否则「S01E01-E06」里 `E01` 前面是数字 `1`，
+# 会被挡掉，结果只认出单集 E01，把整段区间丢了。
+_EP_RANGE_EN_RE = re.compile(
+    r"(?<![a-z])E(?:P)?\s*0*(\d{1,3})\s*[-~～－—–]\s*(?:E(?:P)?\s*)?0*(\d{1,3})(?![0-9])",
+    re.I)
+# 「更新至第 10 集」→ 1..N
+_EP_UPTO_RE = re.compile(r"(?:更新至|更新到|已更新至|已更新)\s*第?\s*(\d{1,4})\s*[集话話期]?")
+# 「全12集」
+_EP_ALL_CN_RE = re.compile(r"全\s*(\d{1,4})\s*[集话話期]")
+# 「第05集」「第5话」
+_EP_SINGLE_CN_RE = re.compile(r"第\s*(\d{1,4})\s*[集话話期]")
+# 「S01E05」
+_EP_SE_RE = re.compile(r"(?<![a-z0-9])S\s*(\d{1,2})\s*E\s*0*(\d{1,3})(?![0-9])", re.I)
+# 裸的「E05」「EP5」（欧美命名常见：Show.Name.E05.1080p）—— 前后不能紧邻字母/数字，
+# 避免命中 hevc / av1 这类编码名里的字母数字组合。
+_EP_BARE_EN_RE = re.compile(r"(?<![a-z0-9])E(?:P)?\s*0*(\d{1,3})(?![0-9a-z])", re.I)
+# 明确「整季 / 全集」的标记（没写出集号时）
+_FULL_PACK_MARKERS = ("全集", "全季", "整季", "合集", "打包", "完整版", "season pack",
+                      "complete season", "complete")
+
+# 一季的集号不会超过这个值；超出的一律不认（宁可判「未知」，也不要认出错集号）
+_MAX_EPISODE_NUMBER = 500
+
+
+def _add_episode_range(target, start, end):
+    """把 ``start..end`` 并入集号集合；参数不合法或区间过大时什么都不做。"""
+    start, end = _finite_int(start), _finite_int(end)
+    if start is None or end is None:
+        return
+    if not (0 < start <= _MAX_EPISODE_NUMBER and 0 < end <= _MAX_EPISODE_NUMBER):
+        return
+    if end < start:
+        start, end = end, start
+    if end - start > _MAX_EPISODE_NUMBER:
+        return
+    target.update(range(start, end + 1))
+
+
+def _parse_episode_coverage(text):
+    """从候选标题里读出它覆盖的集号。
+
+    返回 ``(kind, numbers)``：
+
+    * ``("all", set())``      —— 明确是**整季 / 全集包**（没有集号限制）；
+    * ``("episodes", {…})``   —— 明确只覆盖这些集（单集也在这里）；
+    * ``("unknown", set())``  —— **认不出来**。调用方必须把它当作「不知道」而不是「不覆盖」。
+    """
+    raw = str(text or "")
+    if not raw.strip():
+        return "unknown", set()
+    cleaned = _QUALITY_NOISE_RE.sub(" ", raw)
+
+    numbers = set()
+    for pattern in _EP_RANGE_CN_RES:
+        for m in pattern.finditer(cleaned):
+            _add_episode_range(numbers, m.group(1), m.group(2))
+    for m in _EP_RANGE_EN_RE.finditer(cleaned):
+        _add_episode_range(numbers, m.group(1), m.group(2))
+    for m in _EP_UPTO_RE.finditer(cleaned):
+        _add_episode_range(numbers, 1, m.group(1))
+    for m in _EP_ALL_CN_RE.finditer(cleaned):
+        _add_episode_range(numbers, 1, m.group(1))
+    for m in _EP_SINGLE_CN_RE.finditer(cleaned):
+        _add_episode_range(numbers, m.group(1), m.group(1))
+    for m in _EP_SE_RE.finditer(cleaned):
+        _add_episode_range(numbers, m.group(2), m.group(2))
+    if not numbers:
+        # 裸 E05 放最后：只有在「其它写法都没认出来」时才用它，减少误判面
+        for m in _EP_BARE_EN_RE.finditer(cleaned):
+            _add_episode_range(numbers, m.group(1), m.group(1))
+
+    if numbers:
+        return "episodes", numbers
+    low = cleaned.lower()
+    if any(marker in low for marker in _FULL_PACK_MARKERS):
+        return "all", set()
+    return "unknown", set()
+
+
+def _episode_coverage(note, missing):
+    """判断候选覆盖了缺失集里的哪些。
+
+    返回 ``(state, covered, label)``；``state`` 取值与含义：
+
+    * ``all``     —— 自述为整季 / 全集包 → 视为覆盖全部缺失集；
+    * ``full``    —— 读出的集号**完全包含**缺失集；
+    * ``partial`` —— 只覆盖**一部分**缺失集（单集资源通常落在这里）；
+    * ``none``    —— 读出了集号，但与缺失集**没有任何交集** → 应当排除；
+    * ``unknown`` —— 读不出来 → **不能**当成不覆盖。
+    """
+    wanted = {n for n in (missing or []) if isinstance(n, int)}
+    kind, numbers = _parse_episode_coverage(note)
+    if kind == "unknown":
+        return "unknown", set(), "覆盖未知（标题里没有集号）"
+    if kind == "all":
+        return "all", set(wanted), "整季 / 全集包"
+    if not wanted:
+        return "unknown", set(), "覆盖未知（本季没有具体缺失集）"
+    covered = numbers & wanted
+    if not covered:
+        return "none", set(), "不含缺失集（包内是 %s）" % (_join_nums(sorted(numbers), limit=4) or "其它集")
+    if covered >= wanted:
+        return "full", covered, "完整覆盖 %s" % _join_nums(sorted(covered))
+    return "partial", covered, "仅覆盖 %s（缺 %s）" % (
+        _join_nums(sorted(covered)), _join_nums(sorted(wanted - covered)))
 
 
 # ---------------------------------------------------------------------------
@@ -706,6 +1113,39 @@ class _TtdClient(object):
         能不能用它取决于这里的授权状态，本插件不该再让用户填一份 RE0 凭据。
         """
         return self.get_json("/api/re0/status")
+
+    # -- 调用其它插件（本插件用它把通知交给「企业微信通知」） ----------------
+
+    def run_plugin(self, plugin_id, params):
+        """提交一次插件运行任务，返回 ``(status, text, data)``。
+
+        注意 body 形态是 ``{"params": {...}}`` —— 与 ttd-daily-digest / wecom-call-demo
+        保持一致；**不要**带 ``save_settings``（那会把调用方的临时参数写进对方设置）。
+        """
+        return self.post_json("/api/toolbox/plugins/%s/run" % _url_seg(plugin_id),
+                              {"params": params})
+
+    def plugin_job(self, job_id):
+        """查询插件任务结果，返回 ``(status, text, data)``。"""
+        return self.request("GET", "/api/toolbox/plugins/jobs/%s" % _url_seg(job_id))
+
+    def plugin_manifest(self, plugin_id):
+        """读取某个插件的清单（用于发送前确认它装了、启用、且支持 ``envelope``）。
+
+        列表接口同样没有响应 schema，条目可能直接是 ``plugins`` 数组，也可能被包在
+        ``data`` 里；读不到就返回 ``None``，由调用方给出可操作提示。
+        """
+        status, _text, data = self.request("GET", "/api/toolbox/plugins")
+        if status is None or not 200 <= status < 300 or not isinstance(data, dict):
+            return None
+        items = data.get("plugins")
+        if not isinstance(items, list):
+            inner = data.get("data")
+            items = inner if isinstance(inner, list) else []
+        for item in items:
+            if isinstance(item, dict) and item.get("id") == plugin_id:
+                return item
+        return None
 
 
 class _TmdbClient(object):
@@ -1237,6 +1677,355 @@ def _parse_pansou(payload):
 # 执行体
 # ---------------------------------------------------------------------------
 
+class _TelegramChannel(object):
+    """直接调 Telegram Bot API 发送运行通知（机器人凭据取自 ttd，不落在本插件里）。"""
+
+    key = CH_TG
+    label = CHANNEL_LABELS[CH_TG]
+
+    def __init__(self, log, ttd, ttd_proxy="", bot_choice=0):
+        self.log = log
+        self.ttd = ttd
+        self.ttd_proxy_value = str(ttd_proxy or "").strip()
+        self.bot_choice = max(_as_int(bot_choice, 0), 0)
+        # 选到机器人之后把 Token 记下来，供兜底脱敏用（异常信息里可能带它）
+        self._known_tokens = []
+
+    def send(self, text):
+        """发一条纯文本通知；返回 ``(ok, 说明)``。
+
+        **任何异常都在这一层收口、不向上抛** —— 通知失败不该让整轮检测 / 补齐
+        的结果页取不到；同时异常信息会用已知的 Token 脱敏后再返回。
+        """
+        try:
+            return self._send(text)
+        except Exception as exc:
+            return False, "发送时异常：%s" % scrub_text(str(exc), self._known_tokens)
+
+    def candidates(self):
+        """读 ttd 的通知机器人，返回 ``(可用机器人, 被跳过的条目名)``。"""
+        bots, skipped, seen = [], [], set()
+        for path in ("/api/notify-bots", "/api/proxy_settings"):
+            status, payload, error = self.ttd.get_soft(path)
+            if status is None:
+                self.log.warn("读取 %s 失败：%s" % (path, error))
+                continue
+            if status != 200 or payload is None:
+                self.log.warn("读取 %s 返回 HTTP %s" % (path, status))
+                continue
+            found, dropped = _collect_bots(payload, path)
+            for bot in found:
+                key = (bot["token"], bot["chat_id"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                bots.append(bot)
+            for name in dropped:
+                if name not in skipped:
+                    skipped.append(name)
+            if bots:
+                break
+        for index, bot in enumerate(bots, 1):
+            bot["index"] = index
+        return bots, skipped
+
+    def select(self, bots):
+        """按「列表第 N 个」挑选；0 或选不中时回退到主机器人。"""
+        usable = [b for b in bots if b["token"] and b["chat_id"]]
+        if self.bot_choice > 0:
+            target = next((b for b in bots if b["index"] == self.bot_choice), None)
+            if target is not None and target["token"] and target["chat_id"]:
+                return target
+            if target is not None:
+                self.log.warn("「列表第 %d 个」机器人（%s）缺少 Token 或推送目标，改用主机器人"
+                              % (self.bot_choice, target.get("name") or "-"))
+            else:
+                self.log.warn("配置里只有 %d 个机器人，不存在「列表第 %d 个」，改用主机器人"
+                              % (len(bots), self.bot_choice))
+        primary = next((b for b in usable if _is_primary_name(b["name"])), None)
+        if primary is not None:
+            return primary
+        return usable[0] if usable else None
+
+    def _send(self, text):
+        """`send()` 的实际实现（外层负责兜异常与脱敏）。"""
+        bots, skipped = self.candidates()
+        if skipped:
+            self.log.info("已排除 %d 个非 Telegram / 缺凭据的条目：%s"
+                          % (len(skipped), "、".join(skipped[:6])))
+        if not bots:
+            # 把「被跳过的条目」也说出来：否则用户明明配了机器人，却只看到
+            # 「没读到可用机器人」，完全不知道是缺 Token 还是缺推送目标。
+            extra = ("；已跳过 %d 个不可用条目：%s"
+                     % (len(skipped), "、".join(skipped[:5])) if skipped else "")
+            return False, ("在 ttd 里没读到可用的 Telegram 通知机器人"
+                           "（检查「通知机器人」设置是否配了 Token 与推送目标）" + extra)
+        bot = self.select(bots)
+        if bot is None:
+            return False, "读到的机器人条目都缺少 Token 或推送目标"
+        self._known_tokens.append(bot["token"])
+        self.log.info("通知将使用 Telegram 机器人「%s」（列表第 %s 项）"
+                      % (bot["name"], bot["index"]))
+
+        payload = {"chat_id": bot["chat_id"], "text": text,
+                   "disable_web_page_preview": True, "disable_notification": False}
+
+        attempts = []
+        bot_proxy = (bot.get("proxy") or "").strip()
+        env_proxy = _first_env_proxy()
+
+        def push(proxy, label):
+            if proxy and all(proxy != item[0] for item in attempts):
+                attempts.append((proxy, label))
+
+        # 顺序与 ttd-daily-digest 实测通过的一致：
+        #   ttd 自己配的网络代理最可能通 Telegram（容器里的 HTTP_PROXY 常是平台侧
+        #   内部代理，出网会 502）→ 机器人自带代理 → 容器环境变量 → 直连兜底。
+        if self.ttd_proxy_value:
+            push(self.ttd_proxy_value, "ttd 网络代理设置")
+        if bot_proxy:
+            push(bot_proxy, "机器人自带代理")
+        if env_proxy:
+            push(env_proxy, "容器环境变量代理")
+        attempts.append(("", "直连"))
+
+        self.log.info("通知的 Telegram 连通方式备选 %d 种：%s"
+                      % (len(attempts), " → ".join(label for _p, label in attempts)))
+        last_error = ""
+        for proxy, label in attempts:
+            # 逐档留痕（代理地址脱敏）：排查「到底用了哪个代理 / 卡在哪一档」全靠它
+            if proxy:
+                self.log.info("尝试经「%s」访问 Telegram（%s）" % (_mask_proxy(proxy), label))
+            else:
+                self.log.info("尝试直连 Telegram（不走代理）")
+            try:
+                status, body, data = _http_json(
+                    "POST", "%s/bot%s/sendMessage" % (TELEGRAM_API, bot["token"]),
+                    headers={"Content-Type": "application/json"},
+                    body=payload, proxies=_requests_proxies(proxy))
+            except Exception as exc:
+                # 抛异常 = 连不上，**确定没发出去**，换下一档是安全的
+                last_error = "%s（%s）" % (scrub_text(str(exc), [bot["token"]]), label)
+                self.log.warn("经「%s」发送失败：%s" % (label, last_error))
+                continue
+            if status is None:
+                last_error = "%s（%s）" % (scrub_text(str(body), [bot["token"]]), label)
+                self.log.warn("经「%s」发送失败：%s" % (label, last_error))
+                continue
+            if status in PROXY_LAYER_STATUS:
+                # 这些码来自代理 / 网关本身，说明请求**没到 Telegram** ——
+                # 换下一档重试不会造成重复推送。
+                last_error = "HTTP %s（%s，来自代理/网关）" % (status, label)
+                self.log.warn("经「%s」访问 Telegram 返回 HTTP %s（代理层错误），换下一种方式"
+                              % (label, status))
+                continue
+            # Telegram 自己的响应（200/400/401/403/429…）必须**立刻停** ——
+            # 换代理重发会造成重复推送。
+            return self._interpret(status, data, bot)
+        hint = ""
+        if not self.ttd_proxy_value:
+            hint = ("；提示：ttd「设置 → 网络代理」里没配代理 —— 若你的网络访问 Telegram "
+                    "需要代理，请先在 ttd 里配好")
+        return False, ("连接 Telegram 失败，已依次尝试 %d 种方式：%s%s"
+                       % (len(attempts), last_error, hint))
+
+    @staticmethod
+    def _interpret(status, data, bot):
+        """把 Telegram 的响应翻译成 ``(ok, 说明)``。"""
+        if status != 200:
+            description = ""
+            if isinstance(data, dict):
+                description = str(data.get("description") or "")[:160]
+            hint = ""
+            if status == 401:
+                hint = "（Token 无效）"
+            elif status == 400 and "chat not found" in description.lower():
+                hint = "（推送目标 ID 不对，或该用户从未与机器人对话过）"
+            elif status == 403:
+                hint = "（机器人被屏蔽，或无法主动向该用户发起对话）"
+            return False, "Telegram 返回 HTTP %s%s %s" % (status, hint, description)
+        if isinstance(data, dict) and data.get("ok") is False:
+            return False, "Telegram 拒绝了这条消息：%s" % str(
+                data.get("description") or "")[:160]
+        message_id = ""
+        if isinstance(data, dict):
+            result = data.get("result")
+            if isinstance(result, dict):
+                message_id = str(result.get("message_id") or "")
+        return True, "已发送（机器人「%s」%s）" % (
+            bot["name"], "message_id=%s" % message_id if message_id else "")
+
+
+class _WecomChannel(object):
+    """把运行通知交给「企业微信通知」插件发送（企业 ID / Secret / 收件人由对方保管）。"""
+
+    key = CH_WECOM
+    label = CHANNEL_LABELS[CH_WECOM]
+
+    def __init__(self, log, ttd, plugin_id="", touser=""):
+        self.log = log
+        self.ttd = ttd
+        self.plugin_id = str(plugin_id or "").strip() or DEFAULT_WECOM_PLUGIN_ID
+        self.touser = str(touser or "").strip()
+
+    def send(self, text):
+        """发一条纯文本通知；返回 ``(ok, 说明)``。异常一律收口并用 ttd 令牌脱敏。"""
+        try:
+            return self._send(text)
+        except Exception as exc:
+            return False, "发送时异常：%s" % scrub_text(str(exc), [self.ttd.token])
+
+    def _send(self, text):
+        """`send()` 的实际实现（外层负责兜异常与脱敏）。"""
+        plugin_id = self.plugin_id
+
+        # 发送前先读目标插件清单，确认它装了、启用、且支持 envelope ——
+        # 否则会得到一个难懂的「HTTP 400」
+        manifest = None
+        try:
+            manifest = self.ttd.plugin_manifest(plugin_id)
+        except Exception as exc:
+            self.log.warn("读取插件清单失败（继续尝试发送）：%s"
+                          % scrub_text(str(exc), [self.ttd.token]))
+        if manifest is None:
+            return False, ("没在 ttd 里找到插件「%s」—— 请确认已安装并启用"
+                           "（或把「微信通知插件 id」改成你实际用的那个）" % plugin_id)
+        if manifest.get("enabled") is False:
+            return False, "插件「%s」已安装但处于停用状态，请先启用" % plugin_id
+        inputs = manifest.get("inputs") or []
+        declared = {item.get("name") for item in inputs if isinstance(item, dict)}
+        if "envelope" not in declared:
+            return False, ("插件「%s」不支持 envelope 参数（版本过旧）—— "
+                           "请到插件市场把它更新到最新版" % plugin_id)
+
+        envelope = {"version": 1, "msgtype": "text", "content": text,
+                    "source": PLUGIN_NAME}
+        # 只在**确实填了非空值**时才传 touser：平台的「默认值填齐」行为会把空值顶成 @all，
+        # 从而覆盖掉对方插件里已经配好的收件人。
+        if self.touser:
+            envelope["touser"] = self.touser
+            self.log.info("本次将覆盖微信收件人为：%s" % self.touser)
+        else:
+            self.log.info("未指定微信收件人，沿用「%s」里已保存的设置" % plugin_id)
+
+        params = {"func": "send",
+                  "envelope": json.dumps(envelope, ensure_ascii=False)}
+        # 平台限制：同一插件同时只能有一个未完成任务，忙碌时返回 HTTP 409。
+        # 对方的任务通常很快结束，所以做有限重试（3 次 / 间隔 3 秒）。
+        status, body, payload = None, "", None
+        for attempt in range(3):
+            try:
+                status, body, payload = self.ttd.run_plugin(plugin_id, params)
+            except Exception as exc:
+                return False, "提交任务失败：%s" % scrub_text(str(exc), [self.ttd.token])
+            if status != 409:
+                break
+            detail = ""
+            if isinstance(payload, dict):
+                detail = str(payload.get("error") or payload.get("message") or "")
+            if attempt < 2:
+                self.log.warn("目标插件正忙（HTTP 409：%s），3 秒后重试（第 %d/3 次）"
+                              % (detail or "队列忙", attempt + 2))
+                time.sleep(3)
+            else:
+                return False, ("目标插件持续处于忙碌状态（HTTP 409：%s）—— "
+                               "它的上一个任务还没跑完，稍后再试" % (detail or "队列忙"))
+
+        if status is None:
+            return False, "提交任务失败：%s" % scrub_text(str(body), [self.ttd.token])
+        if status == 404:
+            return False, "目标插件未找到（HTTP 404）—— 未安装或未启用"
+        if status in (401, 403):
+            return False, "HTTP %s：OpenAPI 令牌无效或权限不足" % status
+        if status == 400:
+            detail = ""
+            if isinstance(payload, dict):
+                detail = str(payload.get("message") or payload.get("error") or "")[:160]
+            return False, ("HTTP 400：参数被拒（%s）—— 通常是目标插件版本过旧"
+                           % (detail or "未知参数"))
+        if status == 503:
+            return False, "HTTP 503：插件队列已满或对方有未完成任务，稍后重试"
+        if status not in (200, 201, 202):
+            return False, "提交任务返回 HTTP %s" % status
+        if not isinstance(payload, dict):
+            return False, "任务响应不是 JSON"
+
+        job_id = payload.get("job_id") or payload.get("id") or payload.get("jobId")
+        if not job_id:
+            inner = descend_result(payload)
+            if inner is not payload:
+                job_id = inner.get("job_id") or inner.get("id") or inner.get("jobId")
+        if not job_id:
+            return False, "任务已受理，但没取到 job_id —— 无法确认是否真的投递"
+
+        self.log.info("微信通知任务已提交，job_id=%s，开始等待结果…" % job_id)
+        deadline = time.time() + 60
+        last = ""
+        seen_state = ""
+        while time.time() < deadline:
+            try:
+                code, text_body, job = self.ttd.plugin_job(job_id)
+            except Exception as exc:
+                last = "查询任务失败：%s" % scrub_text(str(exc), [self.ttd.token])
+                time.sleep(2)
+                continue
+            if code != 200 or not isinstance(job, dict):
+                last = "查询任务返回 HTTP %s" % code
+                time.sleep(2)
+                continue
+            result = descend_result(job)
+            state = str(result.get("status") or result.get("state") or "").lower()
+            if state:
+                seen_state = state
+            if state in ("ok", "success", "failed", "error", "timeout"):
+                if state not in ("ok", "success"):
+                    return False, "目标插件执行失败：%s" % (
+                        str(result.get("error") or result.get("message")
+                            or "未说明原因")[:200])
+                # 必须看投递结论：企业微信对**不在可见范围**的收件人仍返回成功
+                if result.get("delivery_ok") is False:
+                    detail = result.get("delivery_note") or ""
+                    invalid = result.get("invalid_users") or []
+                    if invalid:
+                        detail = "收件人不在可见范围：%s" % "、".join(
+                            str(x) for x in invalid[:5])
+                    return False, "已受理但未投递：%s" % (detail or "收件人无效")
+                recipient = result.get("recipient") or "未知"
+                delivery = str(result.get("delivery_status") or "")
+                invalid = result.get("invalid_users") or []
+                seg = ""
+                total = _as_int(result.get("total"), 0)
+                if total:
+                    seg = "，成功 %d/%d 段" % (_as_int(result.get("sent"), total), total)
+                if delivery == "confirmed" and not invalid:
+                    note = "已送达（收件人：%s%s）" % (recipient, seg)
+                elif invalid:
+                    note = "已发送，但以下收件人不可见、实际未投递：%s（收件人：%s）" % (
+                        "、".join(str(x) for x in invalid[:5]), recipient)
+                elif delivery == "unknown":
+                    # 对方用的是自建转发地址时 user/list 不可用，逐人核对做不了 ——
+                    # 但 msgid 已拿到、收件人也没人被判无效，如实说「无法核对」而不是「失败」。
+                    note = ("已由「%s」发送（收件人：%s%s）；该接口无法逐人核对投递情况"
+                            "（对方用的是自建转发地址），以微信端是否收到为准"
+                            % (result.get("channel_name") or "微信", recipient, seg))
+                else:
+                    note = "已发送（收件人：%s%s）" % (recipient, seg)
+                if not any(k in result for k in ("delivery_ok", "delivery_status",
+                                                 "recipient", "msgids")):
+                    note = "任务已受理（对方未回传投递结论，可能版本过旧）"
+                return True, note
+            time.sleep(2)
+        # 超时时**不能直接判失败**：任务可能仍在跑、消息也可能已经发出去了，
+        # 判成失败会把人引去排查一件其实已经成功的事。
+        if seen_state in ("running", "pending", "queued", "started", "processing"):
+            return False, ("等待结果超时（60 秒）：任务仍在运行（状态 %s）—— "
+                           "消息可能已发出，请到微信端确认；若没收到再重试" % seen_state)
+        if last:
+            return False, "等待结果超时（60 秒）：%s" % last
+        return False, ("等待结果超时（60 秒）：任务状态未知 —— "
+                       "消息可能已发出，请到微信端确认")
+
+
 class _Runner(object):
 
     def __init__(self, params, context):
@@ -1299,6 +2088,18 @@ class _Runner(object):
         if self.tmdb_proxy_mode not in VALID_TMDB_PROXY_MODES:
             self.tmdb_proxy_mode = TMDB_PROXY_AUTO
 
+        # 运行结果通知：每次 check / fill 跑完后，把结果整理成三类推到所选渠道。
+        # 默认**空**（不通知）—— 不改变已有用户的行为，要开就在「⑤ 运行通知」里勾。
+        self.notify_channels = [c for c in _as_list(self.p.get("notify_channels"))
+                                if c in VALID_CHANNELS]
+        # 保留无法识别的取值，好在日志里点名（否则「勾了却没发」会查不出原因）
+        self.notify_channels_raw = [c for c in _as_list(self.p.get("notify_channels"))
+                                    if c not in VALID_CHANNELS]
+        self.notify_bot = max(_as_int(self.p.get("notify_bot"), 0), 0)
+        self.wecom_plugin_id = (str(self.p.get("wecom_plugin_id") or "").strip()
+                                or DEFAULT_WECOM_PLUGIN_ID)
+        self.wecom_touser = str(self.p.get("wecom_touser") or "").strip()
+
         self.ttd = _TtdClient(base, token, self.log)
         self.emby = _EmbyClient(self.p.get("emby_url"), self.p.get("emby_api_key"), self.log)
         self.pansou = _PansouClient(self.p.get("pansou_url"), self.p.get("pansou_token"),
@@ -1342,6 +2143,11 @@ class _Runner(object):
         # 盘搜结果的本轮缓存 {(关键词, 网盘类型): (粗筛后的候选, 错误)}
         # 一部剧缺多个季时关键词（剧名）是相同的 —— 不缓存就会对同一个关键词重复发 N 次请求。
         self._pansou_cache = {}
+        # 补齐阶段的账：失败项与「已尝试过」的剧名。
+        # 通知要区分「补了但失败」和「这次压根没轮到它」—— 两者都算未补全，
+        # 但原因完全不同，混在一起用户会以为插件漏跑了。
+        self.fill_errors = []
+        self.fill_attempted = set()
 
     # -- 入口 --------------------------------------------------------------
 
@@ -1358,6 +2164,12 @@ class _Runner(object):
                              % (self.source, " / ".join(VALID_SOURCES)))
 
         self.log.info("%s 启动，执行功能：%s" % (PLUGIN_NAME, FUNC_LABELS.get(self.func)))
+
+        # 「从头开始」要在读配置**之前**分流：它只删一个本地文件，不需要 Emby / TgtoDrive 凭据。
+        # 放到后面的话，配置坏掉时就清不了进度了 —— 而那恰恰是最想重置的时候。
+        if self.func == FUNC_RESET:
+            return self.do_reset()
+
         self._ensure_emby()
         self._load_ttd_config()
 
@@ -1368,6 +2180,9 @@ class _Runner(object):
         result = self.do_check()
         if self.func == FUNC_FILL:
             result = self.do_fill(result)
+        # 检测 / 补齐都跑完了才发通知 —— 三类结果（缺失 / 成功 / 失败）此时才是完整的。
+        # 通知失败**不会**影响本次结果（见 _notify_after_run）。
+        self._notify_after_run(result)
         return result
 
     # -- 读取 TgtoDrive 自身的配置（搜索来源 / 转存目标 / RE0 授权） ---------
@@ -1468,10 +2283,15 @@ class _Runner(object):
             self.log.warn("读取 RE0 状态失败：%s" % str(exc)[:160])
 
     def _effective_provider(self):
-        """补齐时传给 TgtoDrive 的「目标网盘」：表单优先，其次 TgtoDrive 已配的 `target_provider`。
+        """离线下载时传给 TgtoDrive 的「目标网盘」：表单优先，其次 TTD 已配的 `target_provider`。
 
-        ⚠️ **不要把 `media_transfer_targets`（转存目录）也当兜底值**：它是一份路径，
-        而转存 / 离线接口的 `provider` 要的是网盘标识。此前两条一起兜底，一旦用户只配了
+        ⚠️ **只用于离线下载接口**（`/api/media/resources/offline` 的 `provider` = 任务落到
+        哪块网盘）。**转存接口的 `provider` 不是目标网盘**，而是分享链接所属网盘（源）——
+        2026-10-15 实测把目标（115）传给转存接口，TTD 一律 409 SHARE_PROVIDER_MISMATCH。
+        转存目标由 TTD 自己的影视设置决定，见 `_apply_action()` 里 TRANSFER_SOURCE_PROVIDERS 的注释。
+
+        ⚠️ 另外**不要把 `media_transfer_targets`（转存目录）也当兜底值**：它是一份路径，
+        而接口的 `provider` 要的是网盘标识。此前两条一起兜底，一旦用户只配了
         目录、没配目标网盘，`provider` 就会被填成目录路径，请求参数语义就错了。
         目录只在结果页与日志里展示，不参与请求。
         """
@@ -1761,6 +2581,27 @@ class _Runner(object):
             except Exception as exc:
                 rows.append(["TgtoDrive 内置资源检索", "✘", str(exc)[:160]])
 
+        # 6) 运行通知 —— 「测试连接」是用户验证链路的入口，必须一并验证通知渠道：
+        #    否则用户勾了渠道却不知道能不能发出去，只能等下一次正式运行才暴露问题。
+        if self.notify_channels:
+            self.log.info("测试通知渠道：%s"
+                          % "、".join(CHANNEL_LABELS.get(c, c) for c in self.notify_channels))
+            try:
+                results = self._send_notifications(self._test_notify_text())
+            except Exception as exc:
+                results = [(CHANNEL_LABELS.get(c, c), False, "发送时异常：%s" % exc)
+                           for c in self.notify_channels]
+            for label, ok, note in results:
+                rows.append(["运行通知 · %s" % label, "✔" if ok else "✘", note])
+        elif self.notify_channels_raw:
+            rows.append(["运行通知", "⚠", "「通知渠道」里有无法识别的取值：%s（可选：Telegram / 微信）"
+                         % "、".join(self.notify_channels_raw)])
+        else:
+            # 没勾渠道**不加行**：这不是配置错误，加个 ⚠ 会把整页结论拉成「有问题」
+            # （结果页按「✔ 数 == 总行数」判成功/告警）。只在日志里说一句。
+            self.log.info("未勾选「通知渠道」，本次不发送运行结果通知"
+                          "（要开启就在「⑤ 运行通知」里勾选并保存）")
+
         ok_count = sum(1 for r in rows if r[1] == "✔")
         components = [
             {"type": "heading", "text": "🧪 %s · 连接测试" % PLUGIN_NAME},
@@ -1927,15 +2768,120 @@ class _Runner(object):
         return offset % total
 
     def _save_cursor(self, offset):
-        """保存扫描进度；失败只记警告（游标丢了顶多是下次从头扫，不影响正确性）。"""
+        """保存扫描进度，返回 ``True`` / ``False``（是否真的写进去了）。
+
+        失败只记警告（游标丢了顶多是下次从头扫，不影响正确性）—— 但**返回值必须可信**：
+        调用方（如 `do_reset` 的兜底分支）要靠它判断「到底清没清掉」。
+        """
         try:
             self._cursor_path().write_text(
                 json.dumps({"offset": int(offset),
                             "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
                            ensure_ascii=False),
                 encoding="utf-8")
+            return True
         except OSError as exc:
             self.log.warn("保存扫描进度失败（不影响本次结果）：%s" % str(exc)[:120])
+            return False
+
+    def do_reset(self):
+        """清空扫描进度：只动 `scan_cursor.json`，**不运行检测 / 不补齐、也不发通知**。
+
+        幂等：没有进度文件时也返回成功（只说明「本来就没有记录」），
+        免得用户重复点两次看到「失败」。
+        删除失败（例如数据目录只读）时退一步把偏移写回 0 —— 效果等价（下次仍从第 1 部开始）。
+        """
+        path = self._cursor_path()
+        existed = path.is_file()
+        # 路径被**非文件对象**占用（例如被误建成目录）时：既读不到也删不掉，
+        # 必须单独报出来 —— 当成「没有进度」会让用户以为清过了，其实那东西还杵在那儿。
+        occupied = path.exists() and not existed
+        before = self._read_cursor_raw()
+
+        cleared, error, method = False, "", ""
+        if occupied:
+            error = "路径存在但不是文件（可能是被误建成目录）"
+            self.log.warn("清空扫描进度失败：%s %s" % (CURSOR_FILE, error))
+        else:
+            try:
+                if existed:
+                    path.unlink()
+                    method = "deleted"
+                cleared = True
+            except OSError as exc:
+                error = str(exc)[:120]
+                # 兜底：把偏移写回 0（效果等价）。**必须确认真的写进去了** ——
+                # 只看「没抛异常」就报「已清空」会让用户以为进度没了，其实还原封不动。
+                if self._save_cursor(0):
+                    method = "zeroed"
+                    cleared = True
+                    self.log.warn("删除进度文件失败（%s），已改为把偏移写回 0" % error)
+                else:
+                    error = "%s；把偏移写回 0 也失败（见上一条日志）" % error
+
+        if not cleared:
+            self.log.warn("清空扫描进度失败：%s" % error)
+        elif method == "deleted":
+            self.log.info("已清空扫描进度（原记录：下次本应从第 %d 部开始）—— "
+                          "下次运行会从第 1 部重新扫" % (before + 1))
+        elif method == "zeroed":
+            self.log.info("已清空扫描进度（文件删不掉，改为把偏移写回 0）—— "
+                          "下次运行会从第 1 部重新扫")
+        else:
+            self.log.info("扫描进度本来就没有记录（%s 不存在），无需清理" % CURSOR_FILE)
+
+        if occupied:
+            alert = ("**清空进度失败**：`%s` 存在但**不是文件**（可能是被误建成目录）—— "
+                     "插件既读不到它也删不掉它。请到插件数据目录手动清理后重试。" % CURSOR_FILE)
+            tone = "danger"
+        elif method == "deleted":
+            alert = ("**已清空扫描进度**：`%s` 里的记录已删除，**下一次运行会从第 1 部重新开始**。\n\n"
+                     "本次**没有运行检测、没有补齐、也没有发送通知** —— 只清理了一个本地文件。"
+                     % CURSOR_FILE)
+            tone = "success"
+        elif method == "zeroed":
+            # 如实说清：文件没删掉，只是把偏移归零（效果等价，但状态文件还在）
+            alert = ("**已清空扫描进度**：`%s` 没能直接删除（%s），已改为把偏移**写回 0** —— "
+                     "效果相同，**下一次运行会从第 1 部重新开始**。\n\n"
+                     "本次**没有运行检测、没有补齐、也没有发送通知**。"
+                     "若想彻底删掉文件，请检查插件数据目录的写权限。"
+                     % (CURSOR_FILE, error))
+            tone = "warning"
+        elif cleared:
+            alert = ("**没有需要清理的进度**：`%s` 本来就不存在（上一次是全量扫描，或还没跑过）。"
+                     "本次同样**没有运行检测与补齐**。" % CURSOR_FILE)
+            tone = "default"
+        else:
+            alert = ("**清空进度失败**：%s —— 插件数据目录可能不可写。"
+                     "请检查容器里该目录的权限后重试。" % error)
+            tone = "danger"
+
+        rows = [
+            ["执行功能", FUNC_LABELS.get(self.func, self.func)],
+            ["进度文件", "%s（位于插件数据目录）" % CURSOR_FILE],
+            ["清理前记录", "路径被占用，读不到内容" if occupied
+             else (("下次本应从第 %d 部开始" % (before + 1)) if existed else "（无记录）")],
+            ["本次是否检测 / 补齐", "否 —— 只清空进度"],
+            ["本次是否发送通知", "否 —— 「从头开始」不发运行通知"],
+            ["下次运行", "从第 1 部重新开始" if cleared else "仍按原进度继续（未清空）"],
+        ]
+        notes = []
+        if cleared:
+            notes.append("说明：进度只决定「单次检测上限」不够覆盖整库时的**轮转起点**；"
+                         "清空它不会改变检测口径，也不会动媒体库或网盘 —— "
+                         "下次运行从剧名排序的第 1 部开始重新算一遍。")
+        if cleared and not existed:
+            notes.append("另外：整库不超过「单次检测上限」时本来每次都全量扫描，"
+                         "进度文件只在媒体库更大时才有意义。")
+        return self._result(
+            ok=cleared, title="清空扫描进度", tone=tone, alert=alert,
+            stats=[("清理前位置", "被占用" if occupied
+                    else (("第 %d 部" % (before + 1)) if existed else "无记录")),
+                   ("清理结果", "已清空" if (cleared and existed)
+                    else ("本来就为空" if cleared else "失败")),
+                   ("检测 / 补齐", "未运行")],
+            rows=rows, headers=["项目", "值"], notes=notes,
+            rows_label="本次做了什么")
 
     def _scan_window(self, series):
         """决定本次扫描哪一段剧集，返回 ``(窗口列表, 起始偏移, 总数)``。
@@ -2389,30 +3335,39 @@ class _Runner(object):
                 break
             # 与检测阶段同理：**一部剧出问题不该把整轮补齐拖垮**。此前这里没有逐部隔离，
             # 任一步抛异常（例如某条数据缺字段）都会让整轮失败、已处理的结果一起丢掉。
+            name = (item.get("series") or {}).get("name") or "（未知剧名）"
+            # 记下「尝试过」：通知里要能区分「补了但失败」与「这次没轮到它」
+            self.fill_attempted.add(name)
             try:
                 self.filled.append(self._fill_one(item))
             except Exception as exc:
-                name = (item.get("series") or {}).get("name") or "（未知剧名）"
                 fill_errors.append("%s：%s" % (name, str(exc)[:100]))
                 self.log.warn("补齐「%s」失败（已跳过该项，其余继续）：%s" % (name, exc))
             handled += 1
+        # 存到实例上：通知要按「失败原因」分类，不能只留在局部变量里
+        self.fill_errors = fill_errors
         if not self.max_fill and handled > 10 and not self.fill_budget_exhausted:
             self.log.info("本次不限制补齐部数，共处理 %d 部；建议先用「单次补齐上限」小步验证"
                           % handled)
 
         rows = []
-        skipped_actions = 0
+        by_status = {}
         for rec in self.filled:
             for entry in rec["actions"]:
                 cand = entry.get("candidate") or {}
-                if entry["detail"].startswith("跳过") or entry["detail"].startswith("没有搜到"):
-                    skipped_actions += 1
+                # status 现在由 _fill_one 按**真实执行结论**回写（ACT_*）；
+                # 这里的兜底只在极端情况下（有候选却没状态）才可能触发。
+                status = entry.get("status") or (ACT_DONE if cand else "")
+                by_status[status] = by_status.get(status, 0) + 1
                 rows.append([
                     rec["series"],
                     entry["season"],
                     ("整季" if entry.get("whole_season") else _join_nums(entry["missing"])) or "-",
                     entry["keyword"],
                     "%d 条" % entry.get("candidate_count", len(entry["candidates"])),
+                    # 覆盖列：说明**凭什么**选中这条（或为什么跳过）——
+                    # 判断依据是候选标题里的集号，认不出时写「覆盖未知」
+                    entry.get("coverage") or "-",
                     cand.get("type") or "-",
                     # 「仅记录」时这一列就是链接本身，截太短会拿不到可用链接（分享链接常有
                     # 200+ 字）。留 400 字足以覆盖常见形态，200 行 × 400 字仍在结果上限内。
@@ -2454,9 +3409,33 @@ class _Runner(object):
             notes.append("⚠️ 另有 **%d 部剧无法判定**、**没有参与补齐**（某些季的应有集数没读成，"
                          "见检测阶段的警告与运行日志）—— 补齐不覆盖它们。"
                          % len(self.undetermined))
-        if skipped_actions:
-            notes.append("有 %d 个季**没拿到可用的候选**（未搜到资源，或候选类型与所选动作不匹配 —— "
-                         "例如离线下载只接受磁力 / 电驴）。详见下表的「处理结果」列。" % skipped_actions)
+        if by_status.get("no_candidate"):
+            notes.append("有 %d 个季**没搜到任何候选**（也可能是候选类型与所选动作不匹配 —— "
+                         "例如离线下载只接受磁力 / 电驴 / 种子）。详见下表的「处理结果」列。"
+                         % by_status["no_candidate"])
+        if by_status.get("no_cover"):
+            notes.append("🚫 有 %d 个季**搜到的候选都不含缺失集**（候选标题里写明包的是别的集）—— "
+                         "已跳过，没有转存无用资源。换个搜索源、或稍后再试一次。"
+                         % by_status["no_cover"])
+        if by_status.get(ACT_SKIPPED):
+            notes.append("⏭ 有 %d 个季**选中的候选类型与补齐动作不匹配**（动作是「提交离线下载」"
+                         "但候选是网盘分享链接 —— 离线接口只收磁力 / 电驴 / 种子）—— 已跳过。"
+                         "把「补齐设置 → 补齐动作」改成「转存到网盘」再跑一次即可"
+                         "（分享链接走转存接口；磁力 / 电驴 / 种子两个动作都能提交）。"
+                         % by_status[ACT_SKIPPED])
+        if by_status.get(ACT_FAILED):
+            notes.append("✘ 有 %d 个季**执行补齐动作失败**（接口返回错误，未写入网盘）—— "
+                         "原因见下表的「处理结果」列与运行日志，可直接重跑。"
+                         % by_status[ACT_FAILED])
+        if by_status.get("partial_skip"):
+            notes.append("⏸ 有 %d 个季**只搜到部分覆盖的候选**（例如缺 E04-E12，却只找到含 E01-E03 的包）—— "
+                         "转存 / 离线会真实写网盘、可能消耗会员点数，补一半并不划算，已跳过。"
+                         "只想先拿到链接的话，把「补齐动作」临时改成「仅记录」再跑一次即可。"
+                         % by_status["partial_skip"])
+        if by_status.get("partial_record"):
+            notes.append("⚠️ 有 %d 个季选中的候选**只覆盖一部分缺失集**（见「覆盖」列）—— "
+                         "列出的链接补不齐，剩余集需要换个资源再跑一次。"
+                         % by_status["partial_record"])
         if fill_errors:
             # 补齐失败必须显式列出：否则「补齐处理完成」会被读成「这一部已经补好了」
             notes.append("以下剧集**补齐失败**（已跳过该项、其余照常处理，详见日志）："
@@ -2469,7 +3448,7 @@ class _Runner(object):
             ok=True, title="补齐处理完成", tone="default",
             alert=alert, stats=stats, rows=rows,
             rows_label="补齐明细（共 %d 行，按季展开）" % len(rows),
-            headers=["剧集", "季", "缺失集", "搜索关键词", "候选数", "类型", "处理结果"],
+            headers=["剧集", "季", "缺失集", "搜索关键词", "候选数", "覆盖", "类型", "处理结果"],
             notes=notes,
             extra_tables=[{"type": "table", "label": "缺失明细（共 %d 行）" % len(missing_rows),
                            "headers": ["剧集", "季", "缺失集", "集数", "说明"],
@@ -2493,6 +3472,7 @@ class _Runner(object):
                   "actions": []}
         for season in seasons:
             detail = item["seasons"][season]
+            missing = list(detail.get("episodes") or [])
             # 多季同时缺失时用剧名搜（一次拿到整包更省事）；只缺一季时带上季号，
             # 减少「想补 S02 却抓到 S01 包」的概率。
             keyword = "%s S%02d" % (title, season) if len(seasons) == 1 else title
@@ -2502,7 +3482,7 @@ class _Runner(object):
             entry = {
                 "season": "S%02d" % season,
                 "keyword": keyword,
-                "missing": list(detail.get("episodes") or []),
+                "missing": missing,
                 "whole_season": bool(detail.get("whole_season")),
                 # 只留前 5 条进结果页（免得单页过大），但**数量要单独记**——
                 # 此前用 len(只留 5 条的那份列表) 当候选总数，20 条也会显示成「5 条」。
@@ -2510,30 +3490,111 @@ class _Runner(object):
                 "candidate_count": len(candidates),
                 "errors": errors,
                 "candidate": None,
+                "coverage": "",
+                "status": "",
                 "detail": "",
             }
+            # 按「**缺失集是否真的在这个包里**」排序并筛掉明确不含缺失集的候选
+            ordered, excluded = self._rank_candidates(candidates, missing)
+            if candidates:
+                self.log.info("「%s」%s 覆盖判断：候选 %d 条，其中 %d 条可能含缺失集 %s%s"
+                              % (name, entry["season"], len(candidates), len(ordered),
+                                 _join_nums(missing) or "（整季）",
+                                 ("；排除 %d 条明确不含缺失集的" % len(excluded))
+                                 if excluded else ""))
+                self._log_candidates(ordered, "可用候选")
+                self._log_candidates(excluded, "已排除候选")
+
+            chosen = None
             if not candidates:
-                entry["detail"] = "没有搜到候选资源" + ("；" + "；".join(errors) if errors else "")
+                entry["status"] = "no_candidate"
+                entry["detail"] = ("没有搜到候选资源"
+                                   + ("；" + "；".join(errors) if errors else ""))
                 self.log.warn("「%s」%s 未搜到候选资源" % (name, entry["season"]))
+            elif not ordered:
+                # 搜到了，但没有一条包含缺失集 —— 与其转存一个没用的包，不如如实说明。
+                # 这是本插件此前最容易出错的地方：缺 E04-E12 却选中「S01E01」，
+                # 转存出去占网盘、耗点数，结果页还显示成「已处理」。
+                entry["status"] = "no_cover"
+                entry["coverage"] = "均不含缺失集"
+                entry["detail"] = ("跳过：搜到 %d 条候选，但标题里都写明了**不含缺失集**（%s），"
+                                   "已跳过以免转存无用资源"
+                                   % (len(candidates),
+                                      "、".join((e["candidate"].get("note") or "-")[:30]
+                                                for e in excluded[:2])))
+                self.log.warn("「%s」%s 搜到 %d 条候选但不含缺失集（%s）→ 跳过"
+                              % (name, entry["season"], len(candidates),
+                                 _join_nums(missing) or "整季"))
             else:
-                best = self._pick_best(candidates)
+                top = ordered[0]
+                if top["state"] == "partial" and self.action != ACTION_RECORD:
+                    # 只覆盖一部分：转存 / 离线会**真实占用网盘、消耗会员点数**，
+                    # 补一半就写进去并不划算 → 跳过并把缺口说清楚（记录模式无副作用，照常列出）
+                    entry["status"] = "partial_skip"
+                    entry["coverage"] = top["label"]
+                    entry["detail"] = ("跳过：最合适的候选只覆盖缺失集的一部分（%s）—— "
+                                       "转存 / 离线会真实写网盘，补一半并不划算；"
+                                       "可换个搜索源或稍后再跑一次补齐剩余"
+                                       % top["label"])
+                    self.log.warn("「%s」%s 最优候选只覆盖一部分（%s）→ 写动作已跳过"
+                                  % (name, entry["season"], top["label"]))
+                else:
+                    chosen = top
+
+            if chosen is not None:
+                best = chosen["candidate"]
                 entry["candidate"] = best
-                entry["detail"] = self._apply_action(best)
+                entry["coverage"] = chosen["label"]
+                # 状态必须按 **真实执行结论** 回写。曾经的写法是先无条件写 done
+                # 再调 _apply_action，于是「候选是磁力→跳过」「接口报错→失败」
+                # 也统统记成成功，通知里赫然列进「② 被成功补全」—— 用户以为补齐了，
+                # 网盘里却什么都没有。
+                action_status, entry["detail"] = self._apply_action(best)
+                if self.action == ACTION_RECORD and chosen["state"] == "partial":
+                    # 仅记录 + 只覆盖一部分：链接确实列出了，但补不齐 —— 通知里要带
+                    # 【部分补全】标记：不能算成功，也不能混在普通失败里看不出来。
+                    entry["status"] = "partial_record"
+                else:
+                    entry["status"] = action_status
                 # 日志里必须留下**完整链接**（尤其是「仅记录」动作 —— 列出链接就是它的目的；
                 # 此前注释只看 note/url 的前 80 字，长分享链接会被截掉、无法复制）
-                self.log.info("「%s」%s 选定候选：%s｜%s｜%s"
-                              % (name, entry["season"], best.get("type") or "未知",
+                self.log.info("「%s」%s 选定候选（%s）：%s｜%s｜%s"
+                              % (name, entry["season"], chosen["label"],
+                                 best.get("type") or "未知",
                                  (best.get("note") or "-")[:60], best.get("url") or ""))
             record["actions"].append(entry)
         return record
 
+    def _log_candidates(self, items, tag="候选"):
+        """把候选标题打进运行日志。
+
+        覆盖判断唯一依据就是候选标题，判断一旦出错（比如某种没见过的命名方式），
+        用户需要能对着**原始标题**看出是哪一步认错了 —— 所以这里明确打出来。
+        """
+        lines = []
+        for item in (items or [])[:5]:
+            note = str(item["candidate"].get("note") or "-").replace("\n", " ")[:56]
+            lines.append("%s〔%s〕" % (note, item.get("label") or "覆盖未知"))
+        if lines:
+            self.log.info("%s（前 %d 条）：%s" % (tag, len(lines), " ｜ ".join(lines)))
+
     def _search_note_components(self):
-        return [{"type": "text", "text": "**关于「TgtoDrive 内置资源检索」**：该接口"
-                                         "（`/api/media/resources/search`）在规范里没有响应 schema，"
-                                         "本插件已把原始响应写入运行日志。若候选为空，"
-                                         "请对照日志与「我的插件 → 影视发现」页面确认字段，"
-                                         "以便后续版本精确对接。盘搜（PanSou）的响应结构是公开文档化的，"
-                                         "候选解析完整。", "style": {"tone": "muted"}}]
+        return [
+            {"type": "text", "text": "**「覆盖」列是怎么来的**：搜索源返回的候选里既有**单集**、"
+                                     "也有**部分集**、也有**整季包**。插件会从候选标题里读出它包含的集号"
+                                     "（`第01-12集` / `更新至第10集` / `E01-E12` / `S01E05` / `全集` 等），"
+                                     "再与缺失集比对，优先级为 **完整覆盖 → 覆盖未知 → 部分覆盖**，"
+                                     "**明确不含缺失集的直接排除**（标题里没有集号的算「未知」，不会被误排除）。"
+                                     "\n\n对**会真实写网盘**的动作（转存 / 离线），遇到「只有部分覆盖」会**跳过** —— "
+                                     "补一半不划算；「仅记录」没有副作用，照常列出并标注缺口。",
+             "style": {"tone": "muted"}},
+            {"type": "text", "text": "**关于「TgtoDrive 内置资源检索」**：该接口"
+                                     "（`/api/media/resources/search`）在规范里没有响应 schema，"
+                                     "本插件已把原始响应写入运行日志。若候选为空，"
+                                     "请对照日志与「我的插件 → 影视发现」页面确认字段，"
+                                     "以便后续版本精确对接。盘搜（PanSou）的响应结构是公开文档化的，"
+                                     "候选解析完整。", "style": {"tone": "muted"}},
+        ]
 
     def _search_for(self, item, season, keyword, title=None):
         """针对**一个季**在配置的搜索源里找候选；返回 ``(候选列表, 错误列表)``。
@@ -2598,65 +3659,110 @@ class _Runner(object):
 
         return candidates, errors
 
-    def _pick_best(self, candidates):
-        """选一个候选：先看**当前动作能不能用它**，再在同类里「选新不选旧」。
+    def _rank_candidates(self, candidates, missing):
+        """给候选排序，并挑出「明确不含缺失集」的那些。
 
-        动作相关性必须考虑 —— 此前不分动作一律把磁力 / 电驴排第一，于是「转存」动作下
-        也会优先挑中磁力链接，而磁力并不是网盘分享链接（转存接口的 `share_url` 收不了），
-        真跑时会失败或空转。「仅记录」不分动作，网盘白名单内或可直接离线的都算好候选。
+        排序键（越小越优先），三级的顺序是有讲究的：
 
-        同级再按 `datetime` 降序（资源越旧越可能失效，认不出时间时排最后），
-        最后才用标题长度做三级键。
+        1. **动作能不能用它** —— 「提交离线下载」只吃磁力 / 电驴 / 种子，网盘分享链接
+           对它无效；「转存到网盘」则**两类都吃得下**：分享链接走转存接口，
+           磁力 / 电驴 / 种子走 TTD 的离线下载接口（115 的离线设置已在 TTD 侧配好），
+           所以对转存动作来说离线链接不再是「实在没别的候选时才轮到」的备胎。
+           不在「盘搜网盘类型」白名单里的排最后。
+        2. **是否覆盖缺失集** —— 整季包 / 完整覆盖排最前；「覆盖未知」次之（认不出 ≠ 不覆盖，
+           不能因为认不出就把它排到后面）；只覆盖一部分再次之；
+           **明确不含缺失集的直接排除**。
+           此前完全不看这一项，于是缺 E04-E12 时可能选中「S01E01」这类单集资源 ——
+           转存它白白占用网盘、消耗点数，结果页还显示成「已处理」。
+        3. 资源新旧（越新越可能有效），最后是标题长度（短标题通常更精确）。
+
+        返回 ``(有序列表, 被排除列表)``，列表项为
+        ``{"candidate": …, "state": …, "covered": …, "label": …}``。
         """
-        def rank(kind):
+        def rank(candidate):
+            kind = candidate.get("type") or ""
             in_whitelist = (not self.cloud_types) or kind in self.cloud_types
+            is_offline = _is_offline_link(candidate.get("url"), kind)
             if self.action == ACTION_OFFLINE:
-                if kind in OFFLINE_TYPES:
+                if is_offline:
                     return 0
                 return 1 if in_whitelist else 2
             if self.action == ACTION_TRANSFER:
-                if kind in OFFLINE_TYPES:
-                    return 2        # 磁力 / 电驴不能转存，只在实在没别的候选时才轮到
+                # 分享链接与磁力 / 电驴 / 种子都能进网盘（前者转存接口、后者离线接口），
+                # 同权比拼覆盖度；只把白名单外的排后面。
                 return 0 if in_whitelist else 1
-            if kind in OFFLINE_TYPES or in_whitelist:
-                return 0
-            return 1
+            # 仅记录：不执行任何写入，链接形态无所谓
+            return 0 if (is_offline or in_whitelist) else 1
 
-        def sort_key(c):
-            stamp = _parse_datetime(c.get("datetime"))
-            return (rank(c.get("type") or ""), -stamp if stamp else 0,
-                    -len(c.get("note") or ""))
-        return sorted(candidates, key=sort_key)[0]
+        coverage_rank = {"all": 0, "full": 0, "unknown": 1, "partial": 2}
+        ordered, excluded = [], []
+        for candidate in candidates or []:
+            state, covered, label = _episode_coverage(candidate.get("note"), missing)
+            item = {"candidate": candidate, "state": state,
+                    "covered": covered, "label": label}
+            if state == "none":
+                excluded.append(item)      # 不参与排序，调用方会说明并跳过
+            else:
+                ordered.append(item)
+
+        def sort_key(item):
+            candidate = item["candidate"]
+            stamp = _parse_datetime(candidate.get("datetime"))
+            return (rank(candidate),
+                    coverage_rank.get(item["state"], 3),
+                    -len(item["covered"]),          # 同为「部分覆盖」时，覆盖得多的优先
+                    -stamp if stamp else 0,
+                    -len(candidate.get("note") or ""))
+        return sorted(ordered, key=sort_key), excluded
 
     def _apply_action(self, candidate):
-        """按动作处理一条候选；返回可读结论。
+        """按动作处理一条候选；返回 ``(状态, 可读结论)``。
 
         **动作与候选类型的匹配检查必须放在 dry-run 分支之前**：dry-run 的意义就是
         「准确预告真实运行会做什么」。此前先返回「将提交离线下载…」，于是预览里显示
         会离线下载，真跑时却因候选是网盘链接而「跳过」—— 预览与实际不一致。
+
+        **磁力 / 电驴 / 种子的路由**（2026-10-15 按用户实测反馈调整）：曾因「转存接口的
+        share_url 收不了磁力」就在「转存到网盘」动作下直接跳过这类候选 —— 但用户环境里
+        TTD 的 115 网盘**离线设置已配好**，TTD 的离线下载接口（`link` 字段）专收
+        「磁力或其他受支持的离线链接」，提交即可由 TTD 转存进网盘。所以现在：
+        「转存」遇到离线链接改走**离线下载接口**，不再跳过；只有「提交离线下载」
+        遇到网盘分享链接时才真的跳过（那个接口确实收不了分享链接）。
+
+        返回值里的状态是**真实执行结论**（ACT_* 常量），调用方必须用它记账：
+        「跳过」「失败」都不是成功，不能凭「选中了候选」就默认 done。
         """
         kind = candidate.get("type") or "未知"
         label = PANSOU_CLOUD_LABELS.get(kind, kind)
         url = candidate.get("url") or ""
         pwd = candidate.get("password") or ""
+        is_offline = _is_offline_link(url, kind)
 
         if self.action == ACTION_RECORD:
-            return "仅记录：%s%s" % (url, ("（提取码 %s）" % pwd) if pwd else "")
+            return ACT_DONE, "仅记录：%s%s" % (url, ("（提取码 %s）" % pwd) if pwd else "")
 
-        if self.action == ACTION_OFFLINE and kind not in OFFLINE_TYPES:
-            return "跳过：候选是「%s」，离线下载只支持磁力 / 电驴" % label
-        if self.action == ACTION_TRANSFER and kind in OFFLINE_TYPES:
-            # 磁力 / 电驴不是网盘分享链接，转存接口的 share_url 收不了
-            return "跳过：候选是「%s」，转存只接受网盘分享链接（磁力请改用「提交离线下载」）" % label
+        if self.action == ACTION_OFFLINE and not is_offline:
+            return (ACT_SKIPPED,
+                    "跳过：候选是「%s」，离线下载只支持磁力 / 电驴 / 种子" % label)
+        # 「转存」+ 离线链接：不再跳过（见上面的说明），与「离线」动作共用下面的提交分支
 
         provider = self._effective_provider()
         if self.dry_run:
-            return "将%s：%s%s（目标网盘：%s）" % (
-                ACTION_LABELS.get(self.action), url,
-                ("（提取码 %s）" % pwd) if pwd else "",
-                provider or "TgtoDrive 默认")
+            # 预告也要按真实路由说：离线链接预告「将提交离线下载」，分享链接预告「将转存」
+            if is_offline:
+                return (ACT_PREVIEW,
+                        "将提交离线下载：%s%s（目标网盘：%s）" % (
+                            url, ("（提取码 %s）" % pwd) if pwd else "",
+                            provider or "TgtoDrive 默认"))
+            return (ACT_PREVIEW,
+                    "将%s：%s%s（目标网盘：%s）" % (
+                        ACTION_LABELS.get(self.action), url,
+                        ("（提取码 %s）" % pwd) if pwd else "",
+                        provider or "TgtoDrive 默认"))
 
-        if self.action == ACTION_OFFLINE:
+        # 磁力 / 电驴 / 种子 → TTD 离线下载接口（`link` 字段；目标网盘的离线设置
+        # 已在 TTD 侧配好，插件只负责提交）。转存与离线两个动作都可能走到这里。
+        if is_offline:
             # source 用候选自带的来源（盘搜会给 tg:xxx / plugin:xxx，内置检索给 builtin），
             # 不要硬编码 —— 否则把内置检索的结果标成「来自盘搜」是错的。
             body = {"link": url, "source": candidate.get("source") or "plugin",
@@ -2668,13 +3774,29 @@ class _Runner(object):
             self.log.info("提交离线下载 HTTP %s（目标：%s）：%s"
                           % (status, provider or "TgtoDrive 默认",
                              scrub_text((text or "")[:300], [self.ttd.token])))
-            return ("已提交离线下载（HTTP %s，目标 %s）"
-                    % (status, provider or "TgtoDrive 默认")) if ok else \
-                   ("离线下载失败：HTTP %s %s" % (status, scrub_text((text or "")[:120], [self.ttd.token])))
+            if ok:
+                return ACT_DONE, ("已提交离线下载（HTTP %s，目标 %s）"
+                                  % (status, provider or "TgtoDrive 默认"))
+            if _is_duplicate_offline_error(status, data, text):
+                # 115 对重复提交同一条磁力 / 种子返回 502 + 115_OFFLINE_FAILED
+                # 「任务已存在」—— 资源此前已提交进离线队列（多跑几次就会撞上），
+                # 不是失败。按已提交记账，但说明里写清楚「未重复创建」。
+                return ACT_DONE, ("离线任务已存在（115 未重复创建）—— 该链接此前已提交过，"
+                                  "资源已在 115 的离线队列中，本次未重复提交")
+            return ACT_FAILED, ("离线下载失败：HTTP %s %s"
+                                % (status, _api_error_brief(text)))
 
         if self.action == ACTION_TRANSFER:
-            body = {"share_url": url, "source": candidate.get("source") or "plugin",
-                    "provider": provider or ""}
+            body = {"share_url": url, "source": candidate.get("source") or "plugin"}
+            # ⚠️ provider 传**分享链接所属网盘**（源），不是转存目标网盘！
+            # 2026-10-15 实测：把目标（115）当 provider 传，TTD 一律 409
+            # SHARE_PROVIDER_MISMATCH「分享链接实际为光鸭链接，…」—— 它按 URL
+            # 认出了链接的真实网盘，与提交的 provider 不符。转存目标由 TTD 自己的
+            # 影视设置（target_provider）决定，这里不传也绝不能传成目标。
+            # 认不出网盘类型时**不传 provider**，让 TTD 按 URL 自动识别。
+            src_provider = str(kind or "").strip().lower()
+            if src_provider in TRANSFER_SOURCE_PROVIDERS:
+                body["provider"] = src_provider
             if pwd:
                 # ⚠️ 转存接口没有公开的 schema，规范里列出的字段是
                 # share_url/provider/source/slug/candidate_item_id/max_points；
@@ -2686,17 +3808,281 @@ class _Runner(object):
                 body["enforce_points_limit"] = True
             status, text, data = self.ttd.post_json("/api/media/resources/transfer", body)
             ok = status is not None and 200 <= status < 300
-            self.log.info("提交转存 HTTP %s（目标：%s，点数上限：%s）：%s"
-                          % (status, provider or "TgtoDrive 默认",
+            self.log.info("提交转存 HTTP %s（来源：%s，点数上限：%s）：%s"
+                          % (status, src_provider or "TTD 自动识别",
                              self.ttd_max_points if self.ttd_max_points is not None else "未限制",
                              scrub_text((text or "")[:300], [self.ttd.token])))
-            return ("已提交转存（HTTP %s，目标 %s）"
-                    % (status, provider or "TgtoDrive 默认")) if ok else \
-                   ("转存失败：HTTP %s %s" % (status, scrub_text((text or "")[:120], [self.ttd.token])))
+            if ok:
+                return ACT_DONE, ("已提交转存（HTTP %s，来源 %s）"
+                                  % (status, src_provider or "TTD 自动识别"))
+            return ACT_FAILED, ("转存失败：HTTP %s %s"
+                                % (status, _api_error_brief(text)))
 
-        return "未执行"
+        return ACT_NOOP, "未执行"
 
     # -- 生效配置 ----------------------------------------------------------
+
+    # -- 运行结果通知 --------------------------------------------------------
+
+    @staticmethod
+    def _numbered(items, limit=NOTIFY_MAX_ITEMS):
+        """渲染成 ``1. xxx`` 形式的行；超长只留前 N 条并说明还剩多少。"""
+        if not items:
+            return ["（无）"]
+        lines = ["%d. %s" % (index, text) for index, text in enumerate(items[:limit], 1)]
+        if len(items) > limit:
+            lines.append("…另有 %d 部，完整明细见 ttd 插件结果页" % (len(items) - limit))
+        return lines
+
+    def _notify_items(self):
+        """把本次结果整理成通知要的三类。
+
+        返回 ``(missing_lines, ok_lines, bad_lines, extra_notes)``；
+        ``ok_lines`` / ``bad_lines`` 为 ``None`` 表示**本次根本没有执行补齐**（仅检测模式）
+        —— 这与「执行了但一部都没成功」是两回事，必须区分开，否则用户会误读成补齐全失败。
+        """
+        missing_lines = []
+        for item in self.missing:
+            parts = []
+            for season, detail in sorted(item["seasons"].items()):
+                if detail.get("whole_season"):
+                    parts.append("S%02d 整季缺" % season)
+                else:
+                    parts.append("S%02d 缺 %s" % (
+                        season, _join_nums(detail.get("episodes") or []) or "整季"))
+            if item.get("undetermined"):
+                parts.append("另有 %s 无法判定" % "、".join(s for s, _w in item["undetermined"]))
+            missing_lines.append("%s —— %s" % (item["series"]["name"], "；".join(parts)))
+
+        extra_notes = []
+        if self.undetermined:
+            extra_notes.append("另有 %d 部剧无法判定（某个季的「应有集数」没读成，"
+                               "既没算作缺失、也没算作完整）：%s"
+                               % (len(self.undetermined),
+                                  "、".join(n for n, _u in self.undetermined[:8])))
+        if self.budget_exhausted:
+            done, all_total, _start = self.budget_exhausted
+            extra_notes.append("检测因时间预算提前收工：本次只检测了 %d 部（整库 %d 部），"
+                               "进度已保存，下次运行会继续" % (done, all_total))
+        if self.fill_budget_exhausted:
+            done, left = self.fill_budget_exhausted
+            extra_notes.append("补齐因时间预算提前收工：只处理了 %d 部，剩余 %d 部留到下次"
+                               % (done, left))
+
+        if self.func != FUNC_FILL:
+            return missing_lines, None, None, extra_notes
+
+        ok_lines, bad_lines, handled = [], [], set()
+        for rec in self.filled:
+            name = rec.get("series") or "（未知剧名）"
+            handled.add(name)
+            ok_seasons, bad_parts, partial = [], [], False
+            for entry in rec.get("actions") or []:
+                season = entry.get("season") or "-"
+                status = entry.get("status") or ""
+                cover = entry.get("coverage") or ""
+                detail = str(entry.get("detail") or "")
+                if status in (ACT_DONE, ACT_PREVIEW):
+                    # ACT_PREVIEW 是 dry-run 的「将要执行」—— 归入②没问题，
+                    # 标题里已注明「预览模式，未真正执行」。
+                    ok_seasons.append(season)
+                    continue
+                if status in ("partial_record", "partial_skip"):
+                    # 「补全一部分」必须**文字标记**出来 —— 既不能算成功，
+                    # 也不能混在普通失败里看不出来。
+                    partial = True
+                    bad_parts.append("%s ⚠️【部分补全】只补到一部分（%s），未完全补全"
+                                     % (season, cover or "覆盖不全"))
+                    continue
+                if status == ACT_FAILED:
+                    # 接口真的返回了错误（HTTP 5xx/4xx）：是失败，不是成功。
+                    bad_parts.append("%s ✘ 补全失败（%s）"
+                                     % (season, (detail or "接口未返回成功")[:80]))
+                    continue
+                reason = {"no_cover": "搜到的资源都不含缺失集",
+                          "no_candidate": "没有搜到候选资源",
+                          # detail 本身就以「跳过：候选是「磁力」…」开头，直接拿来用，
+                          # 不要再套一层「已跳过」—— 否则通知里会出现「跳过：跳过：」。
+                          ACT_SKIPPED: detail[:80] or "候选类型与补齐动作不匹配，已跳过",
+                          ACT_NOOP: "未执行（未知原因）"}.get(status, status or "未知原因")
+                bad_parts.append("%s ✘ 未补全（%s）" % (season, reason))
+            if bad_parts:
+                tail = ("；已完成：%s" % "、".join(ok_seasons)) if ok_seasons else ""
+                bad_lines.append("%s%s —— %s%s"
+                                 % ("⚠️ " if partial else "", name, "；".join(bad_parts), tail))
+            elif ok_seasons:
+                ok_lines.append("%s —— %s" % (name, "、".join(ok_seasons)))
+
+        # 补齐过程中抛异常的（do_fill 已逐部隔离）：属于「失败」，不能算未处理。
+        for text in self.fill_errors:
+            bad_lines.append("⚠️ %s —— ✘ 补齐过程中出错，该项未完成" % text)
+        # 检测出了缺失、但根本没轮到它处理（「单次补齐上限」/ 时间预算）：既不是成功
+        # 也不是失败，必须单列说明 —— 不能让它在三类里**凭空消失**。
+        pending = [item["series"]["name"] for item in self.missing
+                   if item["series"]["name"] not in self.fill_attempted]
+        for name in pending:
+            bad_lines.append("%s —— ✘ 本次未处理"
+                             "（超出「单次补齐上限」或时间预算，下次运行会继续）" % name)
+        if pending:
+            extra_notes.append("有 %d 部剧本次未执行补齐（受「单次补齐上限」或时间预算限制）"
+                               % len(pending))
+        return missing_lines, ok_lines, bad_lines, extra_notes
+
+    def _fill_heading(self):
+        """② 的措辞要按**本次是否真的写了网盘**来定。
+
+        「仅记录」与「预览模式」都没有真正写入网盘 —— 把它们说成「被成功补全」是假话，
+        用户会以为媒体库里已经补好了。
+        """
+        if self.action == ACTION_RECORD:
+            return "② 已找到资源、列出链接的剧集（仅记录，未写入网盘）"
+        if self.dry_run:
+            return "② 将要执行补齐动作的剧集（预览模式，未真正执行）"
+        return "② 被成功补全的剧集"
+
+    def _build_notify_text(self):
+        """把三类结果拼成一条**纯文本**通知（微信的文本消息不解析 Markdown）。"""
+        missing_lines, ok_lines, bad_lines, extra_notes = self._notify_items()
+        total_lacks = sum(len(d.get("episodes") or [])
+                          for item in self.missing for d in item["seasons"].values())
+        lines = [
+            "🎬 %s" % PLUGIN_NAME,
+            "运行时间：%s ｜ 功能：%s"
+            % (datetime.now().strftime("%Y-%m-%d %H:%M"), FUNC_LABELS.get(self.func, self.func)),
+        ]
+        if self.func == FUNC_FILL:
+            lines.append("检测到 %d 部有缺集（合计 %d 集）｜ 本次已处理 %d 部"
+                         % (len(self.missing), total_lacks, len(self.filled)))
+        elif self.missing:
+            lines.append("检测到 %d 部剧有缺集，合计 %d 集（仅检测，未执行补齐）"
+                         % (len(self.missing), total_lacks))
+        else:
+            lines.append("本次未检测到缺集（仅检测，未执行补齐）")
+
+        lines.extend(["", "① 缺失集的剧集（%d 部）" % len(missing_lines)])
+        lines.extend(self._numbered(missing_lines))
+
+        if ok_lines is None:
+            lines.extend(["",
+                          "② 被成功补全的剧集：本次为「%s」，没有执行补齐"
+                          % FUNC_LABELS.get(self.func, self.func),
+                          "",
+                          "③ 补全失败：同上，本次没有执行补齐"])
+        else:
+            lines.extend(["", "%s（%d 部）" % (self._fill_heading(), len(ok_lines))])
+            lines.extend(self._numbered(ok_lines))
+            lines.extend(["", "③ 补全失败 / 未补全的剧集（%d 部）" % len(bad_lines)])
+            lines.extend(self._numbered(bad_lines))
+
+        if extra_notes:
+            lines.append("")
+            lines.extend("· " + note for note in extra_notes)
+        lines.extend(["", "— 本消息由 ttd 插件「%s」自动发送" % PLUGIN_NAME])
+
+        text = "\n".join(lines)
+        if len(text) > NOTIFY_MAX_CHARS:
+            # 宁可截断也不能超长：企业微信文本消息单条约 2048 字节，超了会被分段甚至拒收
+            text = text[:NOTIFY_MAX_CHARS].rsplit("\n", 1)[0] + \
+                "\n…（内容过长已截断，完整结果请在 ttd 插件结果页查看）"
+        return text
+
+    def _test_notify_text(self):
+        return "\n".join([
+            "🎬 %s" % PLUGIN_NAME,
+            "这是一条测试通知：本插件的「运行结果通知」链路可用。",
+            "运行时间：%s" % datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "",
+            "正式运行时会给出三类结果：",
+            "① 缺失集的剧集",
+            "② 被成功补全的剧集",
+            "③ 补全失败 / 未补全的剧集（含只补全一部分的，会带【部分补全】标记）",
+        ])
+
+    def _send_notifications(self, text):
+        """把文本发给用户勾选的渠道，返回 ``[(渠道名, 成功, 说明)]``。
+
+        **每个渠道独立发送、独立报告**：一个失败不影响另一个 —— 否则「微信挂了」
+        会连带把 Telegram 也吞掉，用户完全不知道消息到底有没有发出去。
+        """
+        results = []
+        for channel in self.notify_channels:
+            label = CHANNEL_LABELS.get(channel, channel)
+            try:
+                if channel == CH_TG:
+                    ok, note = _TelegramChannel(self.log, self.ttd, self._ttd_proxy(),
+                                                self.notify_bot).send(text)
+                else:
+                    ok, note = _WecomChannel(self.log, self.ttd, self.wecom_plugin_id,
+                                             self.wecom_touser).send(text)
+            except Exception as exc:
+                # 单个渠道出意外**不能连累另一个**：否则「微信挂了」会把 Telegram 也
+                # 标成失败，用户会以为两条都没发出去、白白重跑一轮。
+                ok, note = False, "发送时异常：%s" % scrub_text(str(exc), [self.ttd.token])
+            if ok:
+                self.log.info("运行通知已通过「%s」发出：%s" % (label, note))
+            else:
+                self.log.warn("运行通知经「%s」发送失败：%s" % (label, note))
+            results.append((label, ok, note))
+        return results
+
+    def _notify_after_run(self, result):
+        """check / fill 跑完后推送三类结果，并把投递情况写进结果页。"""
+        if self.notify_channels_raw:
+            self.log.warn("「通知渠道」里有无法识别的取值：%s（可选：%s）"
+                          % ("、".join(self.notify_channels_raw),
+                             " / ".join(CHANNEL_LABELS[c] for c in VALID_CHANNELS)))
+        if not self.notify_channels:
+            return
+        text = self._build_notify_text()
+        self.log.info("发送运行结果通知（%d 字 → %s）"
+                      % (len(text), "、".join(CHANNEL_LABELS[c] for c in self.notify_channels)))
+        try:
+            results = self._send_notifications(text)
+        except Exception as exc:
+            # 通知环节出意外**不能**把整轮结果搞没 —— 检测 / 补齐已经做完了，
+            # 结果页必须照常返回（这也是它比通知更重要的原因）。
+            self.log.warn("发送运行通知时出现异常（不影响本次结果）：%s" % exc)
+            results = [(CHANNEL_LABELS.get(c, c), False, "发送时异常：%s" % exc)
+                       for c in self.notify_channels]
+        self._inject_notify(result, results)
+
+    def _inject_notify(self, result, results):
+        """把「通知投递结果」表插到结果页的「运行日志」之前，并刷新日志窗口。"""
+        try:
+            components = result.get("ui", {}).get("components")
+            if not isinstance(components, list):
+                return
+            block = [
+                {"type": "divider"},
+                {"type": "heading", "text": "运行通知"},
+                {"type": "table", "label": "通知投递结果", "headers": ["渠道", "结果", "说明"],
+                 "rows": [[label, "✔ 已发送" if ok else "✘ 失败", note]
+                          for label, ok, note in results]},
+            ]
+            index = None
+            for position, comp in enumerate(components):
+                if (isinstance(comp, dict) and comp.get("type") == "heading"
+                        and str(comp.get("text") or "").strip() == "运行日志"):
+                    index = position
+                    break
+            if index is None:
+                components.extend(block)
+            else:
+                components[index:index] = block
+            # 发送通知也会写日志 —— 结果页的日志窗口要重新取一次，
+            # 否则用户看不到「用了哪个机器人 / 失败原因」。
+            # 只刷新「运行日志」标题**之后**的那个 code 组件：盲目刷新第一个 code
+            # 会把页面里别的代码块一起改掉。
+            for position in range((index + 1) if index is not None else 0, len(components)):
+                comp = components[position]
+                if isinstance(comp, dict) and comp.get("type") == "code" \
+                        and isinstance(comp.get("text"), str):
+                    comp["text"] = self.log.text()
+                    break
+            result["notify_total"] = len(results)
+            result["notify_failed"] = sum(1 for _label, ok, _note in results if not ok)
+        except Exception as exc:
+            self.log.warn("把通知结果写入结果页时出错（不影响本次结果）：%s" % exc)
 
     def do_config(self):
         # TMDB 直连要读 TgtoDrive 的网络代理来解析代理候选，这里先解析一次，
@@ -2741,9 +4127,10 @@ class _Runner(object):
             ["补齐动作", ACTION_LABELS.get(self.action, self.action)],
             ["预览模式", "开（不会真正写入）" if self.dry_run else "关（会真实执行）"],
             ["单次补齐上限", "%d 部" % self.max_fill if self.max_fill else "不限制"],
-            ["目标网盘（provider）", ("%s（来自插件表单）" % self.target_dir) if self.target_dir
+            ["离线目标网盘（provider）", ("%s（来自插件表单）" % self.target_dir) if self.target_dir
              else ("%s（来自 TgtoDrive 的 target_provider）" % self.ttd_target_provider
-                   if self.ttd_target_provider else "（未配置，由 TgtoDrive 用默认值）")],
+                   if self.ttd_target_provider else "（未配置，由 TgtoDrive 用默认值）")
+             + "｜仅用于「提交离线下载」；转存目标由 TgtoDrive 影视设置决定"],
             ["转存目录（仅展示）", self.ttd_transfer_targets or "（TgtoDrive 未配置）"],
         ]
         return self._result(

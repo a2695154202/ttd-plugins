@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "ttd-daily-digest",
   "name": "TTD每日推送",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "把 TgtoDrive 的媒体库数据汇总成一条日报，推送到 Telegram 或企业微信。",
   "author": "a2695154202",
   "entry": "plugin.py",

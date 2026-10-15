@@ -52,8 +52,12 @@ CONNECT_TIMEOUT = 10
 READ_TIMEOUT = 30
 
 # 轮询目标插件结果的次数与间隔（拿不到 job_id 或超时都不影响「消息已提交」这个事实）
-JOB_POLL_ATTEMPTS = 5
-JOB_POLL_INTERVAL = 2
+JOB_POLL_ATTEMPTS = 20
+JOB_POLL_INTERVAL = 3
+# 提交重试（队列忙 409）：平台同一插件同时只允许一个未完成任务，而 wecom-notify 的
+# func=test 会间隔 3 秒连发两条、定时任务也占队列 —— 409 是高频常态，不是链路故障。
+SUBMIT_RETRY_ATTEMPTS = 3
+SUBMIT_RETRY_INTERVAL = 3
 
 API_PLUGINS = "/api/toolbox/plugins"
 API_RUN = "/api/toolbox/plugins/%s/run"
@@ -266,17 +270,21 @@ def _has_plugin_collection(payload):
 
 
 def _enabled_of(entry):
-    """判断插件是否启用；字段名/取值不保证，识别不出时返回 ``None``（不误判）。"""
+    """判断插件是否启用；字段名/取值不保证，识别不出时返回 ``None``（不误判）。
+
+    ⚠️ 不要把 ``running`` 当「启用」判据：它更可能表示「有任务正在跑」——
+    空闲但已启用的插件会被误拦成「未启用」，用户白白去重装。只认 enabled 一族。
+    """
     if not isinstance(entry, dict):
         return None
-    for key in ("enabled", "enable", "active", "is_enabled", "running"):
+    for key in ("enabled", "enable", "active", "is_enabled"):
         if key in entry and isinstance(entry[key], bool):
             return entry[key]
     for key in ("status", "state"):
         value = entry.get(key)
         if isinstance(value, str):
             low = value.strip().lower()
-            if low in ("enabled", "active", "on", "running", "normal", "ok"):
+            if low in ("enabled", "active", "on", "normal", "ok"):
                 return True
             if low in ("disabled", "inactive", "off", "stopped", "paused"):
                 return False
@@ -284,7 +292,12 @@ def _enabled_of(entry):
 
 
 def _find_job_id(payload):
-    """从运行接口的响应里容错取任务 ID（该响应无 schema，字段名不保证）。"""
+    """从运行接口的响应里容错取任务 ID（该响应无 schema，字段名不保证）。
+
+    取值必须按**显式优先级**（job_id → jobId → task_id → id → uuid），不能依赖
+    JSON 键序：若响应同时含 `id`（如回显 plugin_id）与 `job_id` 且 `id` 排在前面，
+    按键序取会拿到插件 id，之后 `GET /jobs/<插件id>` 404，轮询全败还看不出原因。
+    """
     id_keys = ("jobid", "taskid", "id", "uuid")
     wrapper_keys = ("job", "jobs", "task", "tasks", "data", "result", "payload", "info")
 
@@ -294,10 +307,12 @@ def _find_job_id(payload):
     def pick(node):
         if not isinstance(node, dict):
             return ""
-        for key, value in node.items():
-            if norm(key) in id_keys and isinstance(value, (str, int)) \
-                    and str(value).strip():
-                return str(value).strip()
+        # 先按优先级找最明确的键，找不到再退到其它 id 形态
+        for want in id_keys:
+            for key, value in node.items():
+                if norm(key) == want and isinstance(value, (str, int)) \
+                        and str(value).strip():
+                    return str(value).strip()
         return ""
 
     def walk(node, depth):
@@ -460,6 +475,13 @@ class _DemoRunner(object):
             for name, spec in inputs.items():
                 if not spec.get("required"):
                     continue
+                # ⚠️ 「必填 + 有默认值」不该拦：平台会先把清单所有 inputs 按默认值
+                # 填齐再交给插件，这类字段调用方不传也会有值。真正要拦的只有
+                # 「必填且无默认值」—— 那种不传就确实是调用方的责任。
+                # （曾经无条件拦 required，wecom-notify 的凭据类字段一旦标上
+                # required，本插件每次调用都被拦死，而按契约凭据恰恰不该由调用方传。）
+                if spec.get("default") not in (None, ""):
+                    continue
                 if target_params.get(name) in (None, ""):
                     missing.append(name)
             if missing:
@@ -472,16 +494,33 @@ class _DemoRunner(object):
     # -- 调用目标插件 ------------------------------------------------------
 
     def _submit(self, target_params):
-        """提交运行任务，返回 ``(job_id, 说明, 原始响应片段)``。"""
+        """提交运行任务，返回 ``(job_id, 说明, 原始响应片段)``。
+
+        **409（队列忙）必须重试**：平台规定同一插件同时只能有一个未完成任务，
+        而 wecom-notify 的 func=test 会间隔 3 秒连发两条、定时任务也会占队列 ——
+        409 是高频常态。曾经把 409 当普通失败直接抛出，用户看到一句裸
+        「HTTP 409」以为链路坏了，其实等几秒就能成。约定与另外两个插件一致：
+        最多 3 次、间隔 3 秒；仍忙才失败，并说清楚是「对方队列忙」。
+        """
         url = self.base_url + API_RUN % self.target_id
         self.sent_params = dict(target_params)
         self.log.info("提交任务：POST %s" % url)
         self.log.info("本次参数：%s" % json.dumps(target_params, ensure_ascii=False)[:600])
-        status, text, data = _http_json("POST", url, headers=self._headers(),
-                                        body={"params": target_params})
+        status, text, data, snippet = None, "", None, ""
+        for attempt in range(SUBMIT_RETRY_ATTEMPTS):
+            if attempt:
+                # 队列忙：等一会儿再提交（平台侧上一个任务跑完就腾出来了）
+                self.log.info("目标插件队列忙（HTTP 409），%d 秒后重试（第 %d/%d 次）"
+                              % (SUBMIT_RETRY_INTERVAL, attempt + 1, SUBMIT_RETRY_ATTEMPTS))
+                time.sleep(SUBMIT_RETRY_INTERVAL)
+            status, text, data = _http_json("POST", url, headers=self._headers(),
+                                            body={"params": target_params})
+            snippet = scrub_text((text or "")[:200], [self.token])
+            if status == 409:
+                continue        # 队列忙 → 重试
+            break
         if status is None:
             raise ValueError("调用目标插件失败：%s" % scrub_text(text, [self.token]))
-        snippet = scrub_text((text or "")[:200], [self.token])
         if status not in (200, 201, 202):
             hint = ""
             if status == 400:
@@ -490,6 +529,8 @@ class _DemoRunner(object):
                 hint = "（未找到该插件：请在「我的插件」确认它已安装并启用）"
             elif status in (401, 403):
                 hint = "（OpenAPI 令牌无效或权限不足）"
+            elif status == 409:
+                hint = "（目标插件上一个任务还没跑完（队列忙），稍后再试）"
             elif status == 503:
                 hint = "（服务暂时不可用，或目标插件已有未完成的任务）"
             raise ValueError("目标插件返回 HTTP %s%s｜%s" % (status, hint, snippet))
@@ -502,17 +543,21 @@ class _DemoRunner(object):
         return "", "已提交（未取到任务 ID，未确认结果）", snippet
 
     def _descend_result(self, data):
-        """把任务响应一路下沉到**最内层**的插件结果。
+        """把任务响应一路下沉到**最内层**的插件结果，返回下沉路径上的所有节点。
 
         任务查询接口没有响应 schema，实测/规范都只保证「任务对象可能被包在
         result / job / data 任一层」。此前的实现只下沉一层就停：
         若响应是 ``{"job": {"job_id": …, "status": "ok", "result": {…插件结果…}}}``，
         取到的是 **job 包裹本身**，里面的 ``recipient`` / ``delivery_ok`` /
-        ``msgids`` 全部读不到 —— 结果是页全都显示成 ``-``，
+        ``msgids`` 全部读不到 —— 结果页全都显示成 ``-``，
         甚至把「收件人无效、消息没投递」的情况报成「已发送」。
-        因此这里逐层下沉到底（有层数上限，防止自引用死循环）。
+
+        返回**从外到内的节点列表**（含原节点本身）：终态判断要每一层都看 ——
+        job 层的 `success`/`error`/`timeout` 与结果层的 `ok`/`failed` 都是终态，
+        只读最内一层会漏掉「job 成功了但结果里没有 status」的形态。
         """
         node = data if isinstance(data, dict) else {}
+        path = [node]
         for _ in range(4):
             child = None
             for key in ("result", "job", "data", "task"):
@@ -522,24 +567,42 @@ class _DemoRunner(object):
                     break
             if child is None:
                 break
+            path.append(child)
             node = child
-        return node
+        return path
 
     def _poll(self, job_id):
-        """轮询任务结果，返回 ``(状态, 结果字典)``；状态取 ``ok``/``failed``/``pending``。"""
+        """轮询任务结果，返回 ``(状态, 结果字典)``；状态取 ``ok``/``failed``/``pending``。
+
+        终态判断走**下沉路径的每一层**（最内层优先）：插件结果的 status 是
+        ``ok``/``failed``，job 层的状态词是 ``queued``/``running``/``success``/
+        ``error``/``timeout`` —— 两种词表都要认，否则「job 成功但结果无 status」
+        会被永远压成「未确认」，诱导用户重复发送。
+        """
         url = self.base_url + API_JOB % job_id
+        last_http = ""
         for attempt in range(JOB_POLL_ATTEMPTS):
             if attempt:
                 time.sleep(JOB_POLL_INTERVAL)
             status, text, data = _http_json("GET", url, headers=self._headers())
             if status is None or not isinstance(data, dict):
+                # 查询本身失败（网络 / 401 / 404 / 5xx）与「还在跑」完全不是一回事，
+                # 必须留下痕迹：任务记录只存在于服务进程内存，重启即丢，404 很常见。
+                if status is not None:
+                    last_http = "HTTP %s %s" % (status, scrub_text((text or "")[:120],
+                                                                 [self.token]))
+                    self.log.warn("任务查询返回 %s（第 %d 次）" % (last_http, attempt + 1))
                 continue
-            result = self._descend_result(data)
-            state = str(result.get("status") or result.get("state") or "").strip().lower()
-            if state in ("ok", "success", "done", "completed", "finished"):
-                return "ok", result
-            if state in ("failed", "error", "failure", "timeout"):
-                return "failed", result
+            path = self._descend_result(data)
+            for node in reversed(path):        # 最内层优先
+                state = str(node.get("status") or node.get("state") or "").strip().lower()
+                if state in ("ok", "success", "done", "completed", "finished"):
+                    return "ok", path[-1]
+                if state in ("failed", "error", "failure", "timeout"):
+                    return "failed", path[-1]
+        if last_http:
+            self.log.warn("轮询 %d 次仍无终态；最后一次任务查询：%s"
+                          % (JOB_POLL_ATTEMPTS, last_http))
         return "pending", {}
 
     # -- 两个动作 ----------------------------------------------------------

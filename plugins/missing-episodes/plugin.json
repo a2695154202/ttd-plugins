@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "missing-episodes",
   "name": "剧集缺集检测与补齐（未开发完成）",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "🚧 未开发完成，仅供测试。比对本地剧集与 TMDB 应有的季集找出缺集，并按你的配置搜索补齐（默认只记录，不写盘）。",
   "author": "a2695154202",
   "entry": "plugin.py",
@@ -17,9 +17,10 @@
         {"label": "仅检测缺失（只读）", "value": "check"},
         {"label": "检测并补齐", "value": "fill"},
         {"label": "测试连接", "value": "test"},
-        {"label": "查看生效配置", "value": "config"}
+        {"label": "查看生效配置", "value": "config"},
+        {"label": "从头开始（清空扫描进度，不检测）", "value": "reset"}
       ],
-      "help": "决定本次要做什么。右侧按钮会**覆盖**这里的取值：点「检查缺失」就是 check，点「测试连接」就是 test。\n\n建议顺序：先点「测试连接」确认四个数据源都通 → 再点「检查缺失（只读）」看清缺口 → 最后把「执行功能」切到「检测并补齐」（或直接用第三个按钮）执行补齐。\n\n从其他插件/接口调用本插件时，用这个字段指定动作。"
+      "help": "决定本次要做什么。右侧按钮会**覆盖**这里的取值：点「检查缺失」就是 check，点「测试连接」就是 test。\n\n建议顺序：先点「测试连接」确认四个数据源都通 → 再点「检查缺失（只读）」看清缺口 → 最后把「执行功能」切到「检测并补齐」（或直接用第三个按钮）执行补齐。\n\n**从头开始**（`reset`）是另一种用法：**只清空扫描进度**（`scan_cursor.json`），不检测、不补齐、也不发通知 —— 下次运行会从第 1 部重新开始。适合媒体库删改过、换过媒体库，或单纯想重扫一轮的时候。\n\n从其他插件/接口调用本插件时，用这个字段指定动作。"
     },
     {
       "name": "tgto_base_url",
@@ -161,9 +162,9 @@
       "options": [
         {"label": "仅记录并列出链接（最安全）", "value": "record"},
         {"label": "转存到网盘", "value": "transfer"},
-        {"label": "提交离线下载（磁力 / 电驴）", "value": "offline"}
+        {"label": "提交离线下载（磁力 / 电驴 / 种子）", "value": "offline"}
       ],
-      "help": "找到缺失资源后做什么：\n\n• **仅记录并列出链接**：只把候选链接与提取码写进结果页和日志，你自己决定后续（默认，最安全）；\n• **转存到网盘**：调 TgtoDrive 的转存接口把分享链接存进你的网盘 —— **会真实写网盘、可能消耗会员点数**；\n• **提交离线下载**：只对磁力 / 电驴候选有效，调离线下载接口创建任务。\n\n后两种属于破坏性操作，请先用预览模式确认。"
+      "help": "找到缺失资源后做什么：\n\n• **仅记录并列出链接**：只把候选链接与提取码写进结果页和日志，你自己决定后续（默认，最安全）；\n• **转存到网盘**：调 TgtoDrive 的转存接口把分享链接存进你的网盘 —— **会真实写网盘、可能消耗会员点数**；遇到磁力 / 电驴 / 种子候选时自动改走 TTD 的离线下载接口提交（目标网盘的离线设置已在 TgtoDrive 里配好），不会跳过；\n• **提交离线下载**：只对磁力 / 电驴 / 种子候选有效，调离线下载接口创建任务。\n\n后两种属于破坏性操作，请先用预览模式确认。"
     },
     {
       "name": "dry_run",
@@ -205,7 +206,7 @@
       "type": "text",
       "default": "115,quark,aliyun",
       "placeholder": "留空 = 不限；逗号分隔，如 115,quark,aliyun,magnet",
-      "help": "限定盘搜返回哪些网盘类型，留空表示不限。可用值：\n`baidu` `aliyun` `quark` `guangya` `tianyi` `uc` `mobile` `115` `pikpak` `xunlei` `123` `magnet` `ed2k`。\n\n挑选候选时：磁力 / 电驴适合「提交离线下载」，网盘类型适合「转存」。"
+      "help": "限定盘搜返回哪些网盘类型，留空表示不限。可用值：\n`baidu` `aliyun` `quark` `guangya` `tianyi` `uc` `mobile` `115` `pikpak` `xunlei` `123` `magnet` `ed2k`。\n\n挑选候选时：网盘分享链接走「转存」接口；磁力 / 电驴 / 种子两个动作都能提交（转存动作下会自动改走 TTD 离线下载接口）。"
     },
     {
       "name": "max_fill_per_run",
@@ -229,8 +230,44 @@
       "label": "目标网盘（可留空）",
       "type": "text",
       "default": "",
-      "placeholder": "留空 = 直接用 TgtoDrive 已配置的转存目标网盘",
-      "help": "补齐动作要用的**目标网盘标识**（即接口里的 `provider`）。**留空时会自动使用 TgtoDrive 影视设置里的 `target_provider`**，`max_points`（点数上限）也一并复用 —— 这些你已经在 TgtoDrive 里配过了，不需要在这里重填。\n\n⚠️ 这里填的是**网盘标识**（由 TgtoDrive 的转存目标决定），不是目录路径。TgtoDrive 的转存目录（`media_transfer_targets`）由它自己应用，本插件只在「查看生效配置」里展示、不会把它当网盘标识发出去。\n\n只有想**临时覆盖**时才需要填写。点「测试连接」可以看到 TgtoDrive 当前的转存目标与点数上限。"
+      "placeholder": "留空 = 直接用 TgtoDrive 已配置的离线下载目标网盘",
+      "help": "**仅对「提交离线下载」动作生效**：磁力 / 电驴 / 种子的离线任务落到哪块网盘（即离线接口里的 `provider`）。**留空时会自动使用 TgtoDrive 影视设置里的 `target_provider`** —— 这些你已经在 TgtoDrive 里配过了，不需要在这里重填。\n\n⚠️ **「转存到网盘」用不到这个字段**：转存接口的 `provider` 传的是**分享链接所属网盘**（由插件按候选类型自动识别），转存目标完全由 TgtoDrive 的影视设置决定。\n\n⚠️ 这里填的是**网盘标识**，不是目录路径。TgtoDrive 的转存目录（`media_transfer_targets`）由它自己应用，本插件只在「查看生效配置」里展示、不会把它当网盘标识发出去。\n\n只有想**临时覆盖离线目标**时才需要填写。点「测试连接」可以看到 TgtoDrive 当前的配置。"
+    },
+    {
+      "name": "notify_channels",
+      "label": "运行结果通知（可多选，默认不发送）",
+      "type": "multiselect",
+      "default": [],
+      "options": [
+        {"label": "Telegram（用 ttd 已配置的通知机器人）", "value": "tg"},
+        {"label": "微信（调用「企业微信通知」插件）", "value": "wecom"}
+      ],
+      "help": "每次运行（检测 / 补齐）结束后，把结果整理成三类推给你：① **缺失集的剧集** ② **被成功补全的剧集** ③ **补全失败 / 未补全的剧集**（含「只补全一部分」的，会带 `【部分补全】` 文字标记）。\n\n默认**一个都不勾**，此时不发送任何通知。两个渠道可以同时勾选，**各自独立发送、各自报告结果** —— 一个失败不影响另一个，投递结果也会显示在结果页的「运行通知」表里。\n\n- **Telegram**：读 TgtoDrive 已配置的通知机器人（`GET /api/notify-bots`），用它的 Token 与推送目标直连 `sendMessage`，这里**不需要填任何机器人凭据**。推送时会依次尝试「ttd 网络代理 → 机器人自带代理 → 容器环境变量代理 → 直连」，只在代理层错误时才换下一种。\n- **微信**：调用「企业微信通知」插件发送，企业 ID / Secret / 收件人**全部由那个插件保管**。前提是它已装好、启用，并且你点过它的「发送测试消息」能收到。\n\n想先验证链路：勾好渠道后点右侧「**① 测试连接**」，它会顺便发一条测试通知并给出投递结论。"
+    },
+    {
+      "name": "notify_bot",
+      "label": "Telegram 机器人序号（0 = 自动）",
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 20,
+      "help": "TgtoDrive 里可能配了多个 Telegram 通知机器人，这里按**序号**选择用哪一个发通知。\n\n**0（默认）= 自动**：优先用名字带「主」的那个，其次用第一个可用项。\n\n机器人列表是**运行时**才能读到的（来自 `GET /api/notify-bots`），而清单里的下拉选项是静态的 —— 所以这里用序号而不是把机器人名字写死。填了序号但那个位置缺少 Token / 推送目标时会自动回退到主机器人，并在日志里说明。\n\n想知道实际有哪些机器人、哪个是主机器人：点「测试连接」，通知结果里会给出本次使用的机器人名。"
+    },
+    {
+      "name": "wecom_plugin_id",
+      "label": "微信通知插件 id（默认 wecom-notify）",
+      "type": "text",
+      "default": "wecom-notify",
+      "placeholder": "wecom-notify",
+      "help": "要把通知交给哪个「企业微信通知」插件发送。默认就是本仓库的 `wecom-notify`，一般不用改。\n\n改成别的值时，目标插件必须同样支持 `envelope` 参数（见它的 CALLING.md），否则发送会失败并在结果页说明原因。"
+    },
+    {
+      "name": "wecom_touser",
+      "label": "微信收件人（留空 = 沿用该插件设置）",
+      "type": "text",
+      "default": "",
+      "placeholder": "留空 = 用「企业微信通知」里已配好的收件人；也可填 @all 或 zhangsan|lisi",
+      "help": "传给「企业微信通知」插件的 `touser`。**留空（默认）＝沿用那个插件里已保存的收件人** —— 推荐留空，因为那个插件自己点测试能收到，用的就是那份配置；一旦在这里填了值就会**覆盖**它，可能发到不在可见范围的人。\n\n（这里正是踩过的坑：平台会把清单默认值填齐，导致「留空」被 `@all` 顶掉。本插件只在**你确实填了非空值**时才传这个字段。）"
     }
   ],
   "ui": {
@@ -264,7 +301,7 @@
               {"type": "field", "name": "tmdb_proxy_mode"}
             ]},
             {"type": "card", "label": "③ 检测范围", "children": [
-              {"type": "markdown", "text": "控制检测**哪些剧**、**哪些集算「应该有」**。\n\n默认值已按最佳实践调好，**不建议改动**「只统计已播出的集」—— 关掉它会把尚未开播的集也算成缺集，导致大量误报。\n\n「单次检测上限」默认 50 部。媒体库更大时**不会漏**：插件会记录**扫描进度**，每次接着上次的位置往后轮转，多跑几次即可覆盖全库（顺序按剧名排序，稳定不变）。"},
+              {"type": "markdown", "text": "控制检测**哪些剧**、**哪些集算「应该有」**。\n\n默认值已按最佳实践调好，**不建议改动**「只统计已播出的集」—— 关掉它会把尚未开播的集也算成缺集，导致大量误报。\n\n「单次检测上限」默认 50 部。媒体库更大时**不会漏**：插件会记录**扫描进度**，每次接着上次的位置往后轮转，多跑几次即可覆盖全库（顺序按剧名排序，稳定不变）。\n\n**想重新从头扫一遍**：点右侧「**从头开始（清空进度）**」—— 它只清掉进度记录，不检测也不补齐，下次运行就从第 1 部重新开始。"},
               {"type": "field", "name": "library_ids"},
               {"type": "field", "name": "max_series"},
               {"type": "field", "name": "ignore_series"},
@@ -274,7 +311,7 @@
               {"type": "field", "name": "include_s00"}
             ]},
             {"type": "card", "label": "④ 补齐设置", "children": [
-              {"type": "markdown", "text": "去哪里找资源、找到后做什么。\n\n**这里的参数大多直接从 TgtoDrive 读，不需要重填**：转存目标网盘 / 点数上限取自 TgtoDrive 的影视设置；**RE0** 是 TgtoDrive 集成的服务，只要在 TgtoDrive 里授权过就能用（本插件只读它的授权状态）；可限定的「资源来源」清单也由 TgtoDrive 提供。\n\n⚠️ 「转存到网盘」与「提交离线下载」会**真实写网盘、可能消耗会员点数**。所以默认是「仅记录并列出链接」+ **预览模式开启** —— 先跑一次核对候选是否正确，再关掉预览真正执行。"},
+              {"type": "markdown", "text": "去哪里找资源、找到后做什么。\n\n**这里的参数大多直接从 TgtoDrive 读，不需要重填**：转存目标网盘 / 点数上限取自 TgtoDrive 的影视设置；**RE0** 是 TgtoDrive 集成的服务，只要在 TgtoDrive 里授权过就能用（本插件只读它的授权状态）；可限定的「资源来源」清单也由 TgtoDrive 提供。\n\n⚠️ 「转存到网盘」与「提交离线下载」会**真实写网盘、可能消耗会员点数**。所以默认是「仅记录并列出链接」+ **预览模式开启** —— 先跑一次核对候选是否正确，再关掉预览真正执行。\n\n插件会先判断「**缺失的集到底在哪个包里**」：从候选标题读出集号（`第01-12集` / `更新至第10集` / `S01E05` / `全集` 等），再与缺失集比对 —— **不含缺失集的直接排除**；只覆盖一部分时，转存 / 离线会**跳过**（会真实写网盘，补一半不划算），「仅记录」则照常列出。每条结论见结果表的「**覆盖**」列。"},
               {"type": "field", "name": "search_source"},
               {"type": "field", "name": "pansou_url"},
               {"type": "field", "name": "pansou_token"},
@@ -285,17 +322,27 @@
               {"type": "field", "name": "max_fill_per_run"},
               {"type": "field", "name": "resource_sources"},
               {"type": "field", "name": "target_dir"}
+            ]},
+            {"type": "card", "label": "⑤ 运行通知", "children": [
+              {"type": "markdown", "text": "**每次运行（检测 / 补齐）结束后，把结果整理成三类推给你**：\n\n1. **① 缺失集的剧集** —— 哪些剧缺哪些集；\n2. **② 被成功补全的剧集** —— 本次补好的（「仅记录」或「预览模式」下会如实标注**未真正写入网盘**）；\n3. **③ 补全失败 / 未补全的剧集** —— 含搜不到资源、候选不含缺失集、以及**只补全一部分**的（这种会带 `⚠️【部分补全】` 文字标记），也会列出「本次还没轮到处理」的。\n\n**默认不勾任何渠道**（不发送）。两个渠道可同时勾选，各自独立发送、各自报告结果，失败原因也会写进结果页的「运行通知」表。"},
+              {"type": "field", "name": "notify_channels"},
+              {"type": "divider"},
+              {"type": "field", "name": "notify_bot"},
+              {"type": "divider"},
+              {"type": "field", "name": "wecom_plugin_id"},
+              {"type": "field", "name": "wecom_touser"}
             ]}
           ]}
         ]},
         {"type": "group", "style": {"span": 1}, "children": [
           {"type": "card", "label": "⚡ 快捷操作", "children": [
             {"type": "field", "name": "func"},
-            {"type": "markdown", "text": "下面四个按钮会**覆盖**上面选的「执行功能」，点哪个就跑哪个。"},
+            {"type": "markdown", "text": "下面这些按钮会**覆盖**上面选的「执行功能」，点哪个就跑哪个。「从头开始」只清空扫描进度、**不检测也不补齐**。"},
             {"type": "button", "label": "① 测试连接", "action": "run", "params": {"func": "test"}, "style": {"tone": "primary", "size": "large", "variant": "outline"}},
             {"type": "button", "label": "② 检查缺失（只读）", "action": "run", "params": {"func": "check"}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
             {"type": "button", "label": "③ 检测并补齐", "action": "run", "params": {"func": "fill"}, "style": {"tone": "success", "size": "large", "variant": "solid"}},
             {"type": "button", "label": "查看生效配置", "action": "run", "params": {"func": "config"}, "style": {"tone": "default", "size": "large", "variant": "outline"}},
+            {"type": "button", "label": "从头开始（清空进度）", "action": "run", "params": {"func": "reset"}, "style": {"tone": "warning", "size": "large", "variant": "outline"}},
             {"type": "divider"},
             {"type": "link", "href": "https://github.com/a2695154202/ttd-plugins/blob/main/plugins/missing-episodes/README.md", "label": "📖 打开完整说明与常见问题（README）"}
           ]}

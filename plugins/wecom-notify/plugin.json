@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "wecom-notify",
   "name": "企业微信通知",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "向企业微信发送应用消息（文本 / 图文），可被其他插件调用。",
   "author": "a2695154202",
   "entry": "plugin.py",

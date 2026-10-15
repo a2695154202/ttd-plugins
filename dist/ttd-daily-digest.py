@@ -6,7 +6,7 @@ PLUGIN_MANIFEST = {
   'schema_version': 1,
   'id': 'ttd-daily-digest',
   'name': 'TTD每日推送',
-  'version': '1.0.0',
+  'version': '1.0.1',
   'description': '把 TgtoDrive 的媒体库数据汇总成一条日报，推送到 Telegram 或企业微信。',
   'author': 'a2695154202',
   'entry': 'plugin.py',
@@ -789,18 +789,53 @@ def _first_env_proxy():
 
 
 def mask_proxy(value):
-    """代理地址脱敏：只保留协议与主机，隐藏可能的账号密码。"""
+    """代理地址脱敏：只保留协议与主机，隐藏可能的账号密码。
+
+    两种形态都要认：``http://user:pass@host:port`` 与无协议的
+    ``user:pass@host:port``（部分代理工具导出这种）。曾经只处理带 ``://`` 的形态，
+    无协议地址原样返回，账号密码直接进运行日志。
+    """
     text = str(value or "")
     if "@" in text:
-        scheme, _, rest = text.partition("://")
+        scheme, sep, rest = text.partition("://")
+        if not sep:
+            scheme, rest = "", text          # 无协议形态
         if rest:
-            return "%s://***@%s" % (scheme, rest.split("@", 1)[1])
+            return "%s***@%s" % ("%s://" % scheme if scheme else "",
+                                 rest.split("@", 1)[1])
     return text
 
 
 # ---------------------------------------------------------------------------
 # HTTP 工具：直连（显式绕过容器环境代理）
 # ---------------------------------------------------------------------------
+
+class _MaybeSentError(RuntimeError):
+    """请求**可能已经送达对方**（读超时 / 响应中断）。
+
+    连接被拒、连接超时 → 确定没发出去，换下一个代理重试安全；
+    但**读超时**意味着请求已经到达 Telegram、消息可能已经发出，只是响应没在读回 ——
+    这时换代理重发 = 用户收到两条。调用方遇到它必须**停止尝试**，按「状态未知」报告。
+    """
+
+
+def _is_read_timeout(exc):
+    """判断异常是不是「读超时」—— 请求已送达对方、只是没读到响应。
+
+    ``ConnectTimeout``（连接阶段失败）**不算**：那种情况确定没发出去，换代理重试安全。
+    requests 的 ``ReadTimeout``、以及 urllib 路径的 ``socket.timeout`` /
+    ``TimeoutError`` 都算（urllib 的 timeout 不区分连接与读取，保守按读超时处理）。
+    """
+    if requests is not None:
+        try:
+            if isinstance(exc, requests.exceptions.ConnectTimeout):
+                return False
+            if isinstance(exc, requests.exceptions.ReadTimeout):
+                return True
+        except Exception:
+            pass
+    return isinstance(exc, (TimeoutError, ))
+
 
 class _Http(object):
     """极简 HTTP 客户端。
@@ -864,6 +899,11 @@ class _Http(object):
                 allow_redirects=False,
             )
         except Exception as exc:
+            # **读超时**要单独识别：请求已送达对方，重发会造成重复推送。
+            # ConnectTimeout 是连接阶段失败（确定没发出去），归入普通 RuntimeError。
+            if _is_read_timeout(exc):
+                raise _MaybeSentError(scrub_text(
+                    "%s: %s" % (type(exc).__name__, exc), secrets))
             raise RuntimeError(scrub_text("%s: %s" % (type(exc).__name__, exc),
                                           secrets))
         return self._parse(response.status_code, response.text, raw, secrets)
@@ -890,8 +930,12 @@ class _Http(object):
             return self._parse(exc.code, exc.read().decode("utf-8", "replace"),
                                raw, secrets)
         except Exception as exc:
-            raise RuntimeError(scrub_text("%s: %s" % (type(exc).__name__, exc),
-                                          secrets))
+            # urllib 的 timeout 不区分连接/读取阶段，保守起见按「可能已送达」处理 ——
+            # 宁可少换一档代理，也不能重复推送。
+            message = scrub_text("%s: %s" % (type(exc).__name__, exc), secrets)
+            if _is_read_timeout(exc):
+                raise _MaybeSentError(message)
+            raise RuntimeError(message)
         return self._parse(status, text, raw, secrets)
 
     @staticmethod
@@ -1164,7 +1208,12 @@ class _Collector(object):
         pairs = []
         for key, value in data.items():
             if isinstance(value, (int, float)):
-                pairs.append((str(key), int(value)))
+                # 必须走 _num()：Python 的 json 默认接受 NaN / Infinity 字面量，
+                # 直接 int() 会抛 ValueError / OverflowError —— 那不是 RuntimeError，
+                # 会逃逸板块的 except 把整份日报炸掉（_num 的 docstring 专门防这个坑）。
+                number = _num(value)
+                if number is not None:
+                    pairs.append((str(key), number))
         pairs.sort(key=lambda x: x[0])
         return {"items": pairs[-7:], "total": len(pairs)}
 
@@ -1185,7 +1234,10 @@ class _Collector(object):
             label = _label_of(key)
             try:
                 value = getattr(self, "collect_" + key)()
-            except RuntimeError as exc:
+            except Exception as exc:
+                # 兜 Exception 而不是只兜 RuntimeError：单个板块出**任何**意外
+                #（NaN 转 int 的 ValueError、字段结构变化的 KeyError…）都不该把
+                # 整份日报拖垮 —— 其余板块照常采集、推送。
                 self.log.warn("板块「%s」数据获取失败：%s" % (label, exc))
                 self.errors.append((label, str(exc)))
                 continue
@@ -1200,6 +1252,17 @@ class _Collector(object):
         if "counts" in enabled:
             label = _label_of("counts")
             added = self.data.get("added")
+            if added is None and "added" not in enabled:
+                # counts 勾了、added 没勾：**静默补采**一次（不进报告、不计入板块）。
+                # 曾经直接挂一条错误「依赖最近入库但没取到」—— 两个开关在 UI 上
+                # 相互独立，帮助文本还写着「不额外请求接口」，用户没义务知道这层依赖；
+                # 叠加 only_when_content 时更会把配置错误伪装成「所有板块都没有内容」。
+                self.log.info("「%s」需要「最近入库」的数据，本次顺带采集（不计入报告）"
+                              % label)
+                try:
+                    added = self.collect_added()
+                except Exception as exc:
+                    self.log.warn("顺带采集「最近入库」失败：%s" % exc)
             if added is None:
                 self.log.warn("板块「%s」跳过：它依赖「最近入库」，而后者没取到"
                               % label)
@@ -1319,6 +1382,24 @@ def _is_empty(key, value):
     return False
 
 
+def _report_has_body(report):
+    """渲染结果里除标题行 / 分隔线 / 空行外，是否还有**正文**。
+
+    第一行是标题（插件名 + 时间），不算正文。用于纠正「数据非空 ≠ 有内容可读」：
+    compact 版式下列表类板块不渲染明细，只勾这些板块时 raw 数据非空、渲染出来
+    却只有标题行 + 分隔线 —— 这种「空壳日报」推出去不如跳过。
+    """
+    lines = str(report or "").split("\n")
+    for text in lines[1:]:
+        text = text.strip()
+        if not text:
+            continue
+        if set(text) <= set("─—━-_=* "):     # 分隔线
+            continue
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # 报告渲染
 # ---------------------------------------------------------------------------
@@ -1383,8 +1464,11 @@ class _Renderer(object):
         return lines
 
     def counts(self, data):
-        lines = [self._h("今日新增")] if self.fmt != "markdown" \
-            else [self._h("今日新增")]
+        # 标题必须如实：这个板块统计的是 /api/emby/latest 返回的**最近 N 条入库**
+        # （N=added_limit，默认 10），既没按入库日期过滤、也不受「今天」约束 ——
+        # 写成「今日新增」是假数据（当天零入库也可能推出「今日新增 3 部」）。
+        # 插件自己的帮助文本承诺过「不会谎称是今日新增」，这里不能再犯。
+        lines = [self._h("最近入库统计")]
         lines.append(self._kv("电影", "%d 部" % data["movie"]))
         lines.append(self._kv("剧集", "%d 部（新增 %d 集）"
                               % (data["series"], data["episode"])))
@@ -1702,13 +1786,18 @@ class _TelegramChannel(object):
 
     def send(self, text):
         """返回 (ok, 说明)。"""
-        bots, skipped = self.candidates()
+        bots, skipped, read_errors = self.candidates()
         if skipped:
             self.log.info("已排除 %d 个非 Telegram / 缺凭据的条目：%s"
                           % (len(skipped), "、".join(skipped[:6])))
         if not bots:
-            return False, "在 ttd 里没读到可用的 Telegram 通知机器人" \
-                          "（检查「通知机器人」设置是否配了 Token 与推送目标）"
+            if read_errors:
+                return False, ("读取 ttd 的「通知机器人」接口失败（%s）—— "
+                               "无法确认有没有配机器人；这通常是 ttd 接口暂时不可达"
+                               "或令牌问题，不是没配机器人"
+                               % "；".join(read_errors[:2]))
+            return False, ("在 ttd 里没读到可用的 Telegram 通知机器人"
+                           "（检查「通知机器人」设置是否配了 Token 与推送目标）")
         bot = self.select(bots)
         if bot is None:
             return False, "读到的机器人条目都缺少 Token 或推送目标"
@@ -1775,8 +1864,16 @@ class _TelegramChannel(object):
                     secrets=[bot["token"]],
                     proxy_override=proxy,
                 )
+            except _MaybeSentError as exc:
+                # 读超时：请求已到达 Telegram，消息**可能已经发出** —— 绝不能换代理
+                # 重发（那会重复推送），也不能再试直连。按「状态未知」如实报告。
+                self.log.warn("经「%s」发送时读超时（请求可能已送达，不重试）：%s"
+                              % (label, exc))
+                return None, ("状态未知：请求已发出但在 %d 秒内没有读到 Telegram 的响应"
+                              "（经%s）—— 消息可能已送达，请先到 Telegram 确认，"
+                              "不要直接重试（重复推送）" % (TG_READ_TIMEOUT, label))
             except RuntimeError as exc:
-                # 只在这一层重试（连不上 = 确定没发出去）。
+                # 连接失败 / 连接超时：确定没发出去，换下一种方式重试。
                 last_error = "%s（%s）" % (exc, label)
                 self.log.warn("经「%s」发送失败：%s" % (label, exc))
                 continue
@@ -1802,7 +1899,13 @@ class _TelegramChannel(object):
 
     @staticmethod
     def _interpret(status, data, bot):
-        """把 Telegram 的响应翻译成 (ok, 说明)。"""
+        """把 Telegram 的响应翻译成 (ok, 说明)。
+
+        **HTTP 200 也必须校验响应体**：透明代理 /  captive portal 会返回 200 + HTML，
+        ``_parse`` 解析不出 JSON 时 data 为 None —— 曾经这种情况直接判「已发送」，
+        用户永远收不到日报却显示成功。Telegram 的正常响应一定带 ``ok`` 字段，
+        收不到它就是没发成。
+        """
         if status != 200:
             description = ""
             if isinstance(data, dict):
@@ -1815,14 +1918,16 @@ class _TelegramChannel(object):
             elif status == 403:
                 hint = "（机器人被用户屏蔽，或无法主动发起对话）"
             return False, "Telegram 返回 HTTP %s%s %s" % (status, hint, description)
-        if isinstance(data, dict) and data.get("ok") is False:
+        if not isinstance(data, dict) or "ok" not in data:
+            return False, ("Telegram 返回了无法解析的响应（HTTP 200，非 JSON）—— "
+                           "按失败处理：可能是代理捕获页，消息并未送达")
+        if data.get("ok") is not True:
             return False, "Telegram 拒绝了这条消息：%s" % str(
                 data.get("description") or "")[:160]
         message_id = ""
-        if isinstance(data, dict):
-            result = data.get("result")
-            if isinstance(result, dict):
-                message_id = str(result.get("message_id") or "")
+        result = data.get("result")
+        if isinstance(result, dict):
+            message_id = str(result.get("message_id") or "")
         return True, "已发送（机器人「%s」%s）" % (
             bot["name"], "message_id=%s" % message_id if message_id else "")
 
@@ -1845,12 +1950,20 @@ class _WecomChannel(object):
 
         # 发送前先读目标插件清单，确认它装了、启用、且支持 envelope
         manifest = None
+        read_error = ""
         try:
             manifest = self.tdd.plugin_manifest(plugin_id)
         except Exception as exc:
-            self.log.warn("读取插件清单失败（继续尝试发送）：%s" % exc)
+            # 读不到清单 ≠ 插件没装：OpenAPI 临时不可达、令牌失效都会走到这。
+            # 曾经统称「没在 ttd 里找到插件」，用户按提示去重装，方向完全错误。
+            read_error = str(exc)[:160]
+            self.log.warn("读取插件清单失败（继续尝试发送）：%s" % read_error)
 
         if manifest is None:
+            if read_error:
+                return False, ("读取插件「%s」的清单失败（%s）—— 无法确认它是否安装；"
+                               "这通常是 ttd 接口暂时不可达或令牌问题，不是插件没装"
+                               % (plugin_id, read_error))
             return False, ("没在 ttd 里找到插件「%s」—— 请确认已安装并启用"
                            "（或把「微信通知插件 id」改成你实际用的那个）" % plugin_id)
         if manifest.get("enabled") is False:
@@ -1969,12 +2082,14 @@ class _WecomChannel(object):
                     seg = "，成功 %d/%d 段" % (sent if sent is not None else total, total)
 
                 # 投递结论要分三态说清楚，别把「已投递」说成不确认：
-                #   confirmed → 对方按可见范围逐人核对过，确实投出去了；
+                #   ok        → 对方按可见范围逐人核对过（wecom-notify 的真实词表：
+                #               ok / empty / missing / unknown，**没有 confirmed** ——
+                #               曾经判 "confirmed" 是死代码，「已送达」永不出现）；
                 #   unknown   → 对方用了自建转发地址，user/list 不可用，
                 #               **校验做不了**，但 msgid 已拿到、参数里也没人无效；
                 #   failed    → 上面 delivery_ok is False 分支已拦掉。
                 invalid = result.get("invalid_users") or []
-                if delivery == "confirmed" and not invalid:
+                if delivery in ("ok", "confirmed") and not invalid:
                     note = "已送达（收件人：%s%s）" % (recipient, seg)
                 elif invalid:
                     note = "已发送，但以下收件人不可见、实际未投递：%s（收件人：%s）" % (
@@ -2123,8 +2238,15 @@ def result_ui(log, report, channels_result, extra=None, skipped_reason=""):
     if channels_result or skipped_reason:
         rows = [["渠道", "结果", "说明"]]
         for item in channels_result:
-            rows.append([item["label"], "✅ 成功" if item["ok"] else "❌ 失败",
-                         item["note"]])
+            # 三态渲染：ok=None 是「状态未知」（如 Telegram 读超时——消息可能已送达），
+            # 既不能算成功也不能算失败，显示成 ❓ 并提示不要盲目重试。
+            if item["ok"]:
+                mark = "✅ 成功"
+            elif item["ok"] is None:
+                mark = "❓ 状态未知"
+            else:
+                mark = "❌ 失败"
+            rows.append([item["label"], mark, item["note"]])
         if len(rows) == 1:
             rows.append(["—", "—", skipped_reason or "未发送"])
         components.append({"type": "heading", "text": "推送结果"})
@@ -2250,7 +2372,15 @@ class _Digest(object):
 
         # 没有内容时不打扰
         if self.options["only_when_content"] and not is_test:
-            if not collected or all(_is_empty(k, v) for k, v in collected.items()):
+            empty = (not collected or all(_is_empty(k, v) for k, v in collected.items()))
+            if not empty and not _report_has_body(report):
+                # **数据非空 ≠ 有内容可读**：compact 版式下列表类板块（最近入库 /
+                # 最近播放 / 日历 / 趋势）不渲染明细，只勾这些板块时 raw 数据非空、
+                # 渲染出来却只有标题行 + 分隔线 —— 这时每天推一条空消息，不如跳过。
+                empty = True
+                self.log.info("各板块数据非空，但渲染结果没有正文"
+                              "（compact 版式下游标类板块不输出明细），按无内容跳过")
+            if empty:
                 self.log.info("所有板块都没有内容，按「没有新内容时不推送」跳过本次发送")
                 return result_ui(
                     self.log, report, [],
@@ -2278,13 +2408,19 @@ class _Digest(object):
 
         self._record(results, report, func)
 
+        # **先装配结果页，再决定成败**：曾经 ok_count==0 时在装配前就 raise，
+        # 用户只看到一句裸错误，报告全文、运行日志、渠道明细全部丢失 ——
+        # 违反「结果页必须先于通知结论存在」的既定约定。现在失败信息随结果页
+        # 一起返回，另加 status=failed 让定时侧能标记这次运行失败。
+        ui = result_ui(self.log, report, results,
+                       extra=channel_table(self.options))
         ok_count = sum(1 for r in results if r["ok"])
         if ok_count == 0:
-            raise RuntimeError("所有渠道都发送失败：%s"
-                               % "；".join("%s %s" % (r["label"], r["note"])
-                                           for r in results))
-        return result_ui(self.log, report, results,
-                         extra=channel_table(self.options))
+            self.log.warn("所有渠道都发送失败：%s"
+                          % "；".join("%s %s" % (r["label"], r["note"])
+                                      for r in results))
+            ui["status"] = "failed"
+        return ui
 
     def _test_banner(self):
         now = datetime.now(BEIJING)
@@ -2327,15 +2463,19 @@ class _Digest(object):
         # 通知渠道探测
         tg = _TelegramChannel(self.log, tdd, self.options, http)
         try:
-            bots, skipped = tg.candidates()
+            bots, skipped, read_errors = tg.candidates()
         except Exception as exc:
-            bots, skipped = [], []
+            bots, skipped, read_errors = [], [], []
             rows.append(["Telegram 机器人", "❌", str(exc)[:120]])
         if bots:
             chosen = tg.select(bots) or {}
             rows.append(["Telegram 机器人", "✅",
                          "读到 %d 个可用；本次将使用「%s」（列表第 %s 项）"
                          % (len(bots), chosen.get("name"), chosen.get("index"))])
+        elif read_errors:
+            rows.append(["Telegram 机器人", "❌",
+                         "读取「通知机器人」接口失败：%s（不是没配机器人，是接口没读到）"
+                         % "；".join(read_errors[:2])[:120]])
         else:
             rows.append(["Telegram 机器人", "❌",
                          "未读到可用条目（检查 ttd「通知机器人」设置）"])
