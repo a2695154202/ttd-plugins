@@ -5,7 +5,7 @@
 本仓库同时满足两个身份：它是一个标准的 GitHub 开源仓库，也是一个可直接被 TgtoDrive 读取的**插件市场目录**。把本仓库地址填入 TgtoDrive 的「插件市场 → 来源设置」，即可浏览、安装并自动检查更新这里发布的插件，无需另外的市场服务器。
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Plugins](https://img.shields.io/badge/plugins-3-informational)](#插件列表)
+[![Plugins](https://img.shields.io/badge/plugins-5-informational)](#插件列表)
 [![Protocol](https://img.shields.io/badge/plugin%20protocol-schema__version%201-informational)](#插件列表)
 
 ---
@@ -17,6 +17,8 @@
 | **药丸论坛签到**<br>`invites-signin` | 1.0.2 | 药丸论坛（invites.fun，Flarum）自动签到。Cookie 优先换取新会话后签到，失败自动回退用户名密码登录；支持仅查询签到状态、查看本地签到历史；结果经 TgtoDrive 已配置的**主通知机器人**推送，也可**同时调用「企业微信通知」插件发送微信通知**（文本或带图卡片，「发送测试通知」同样会走微信链路）；结果页内含运行日志窗口与「运行一次」按钮。 | [README](plugins/invites-signin/README.md) |
 | **企业微信通知**<br>`wecom-notify` | 1.0.0 | 让 TgtoDrive 具备**企业微信（WeCom）应用消息推送**能力，同时作为其他插件的「微信通知出口」。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可把消息发给成员、部门、标签或全体可见成员。消息类型只有 **文本 text** 与 **图文消息 news** 两种 —— 这两种微信插件都能收到；卡片类类型（模板卡片 / 文本卡片 / markdown）已移除，但调用方传入模板卡片 JSON 时会**自动转换成图文**。支持转发代理地址（应对「企业可信IP」限制）、**可选是否经过容器代理**、超长消息自动分段、access_token 本地缓存与发送历史，内置**「发送测试消息」按钮**一键验证通知链路。 | [README](plugins/wecom-notify/README.md) |
 | **微信通知调用示例**<br>`wecom-call-demo` | 1.0.0 | **演示「一个插件如何调用另一个插件」**的最小可用范例：通过 OpenAPI 运行接口调用「企业微信通知」插件发送消息。界面分「**文本消息**」与「**卡片消息**」两个互相独立的子页面，各配收件人与内容（卡片页已预填示例），点对应按钮即发出。发送前先读取目标插件清单，**校验参数的键是否已声明、下拉取值是否在选项内**（提前挡住服务端会拒绝的 HTTP 400）；发送后轮询结果并区分「请求被受理」与「消息真的送达」（`delivery_ok`）。目标插件 id 可配置，便于扩展。 | [README](plugins/wecom-call-demo/README.md) |
+| **TTD每日推送**<br>`ttd-daily-digest` | 1.0.0 | 每天定时把 TgtoDrive 的数据汇总成**一条消息**推送：今日入库、Emby 新增电影/电视剧数量、媒体库总览、最近播放、追剧日历、播放趋势。数据全部经 TgtoDrive 自身的 OpenAPI 读取，**不需要额外配置 Emby 地址或密钥**。可推 Telegram（用 ttd 已配置的通知机器人）与微信（调用「企业微信通知」插件，凭据由它自己保管），可单选也可双发；板块自由勾选、每项可设条数上限，版式支持纯文本与 Markdown。右侧有「发送测试推送」按钮一键验证链路。 | [README](plugins/ttd-daily-digest/README.md) |
+| **剧集缺集检测与补齐**<br>`missing-episodes` | 1.0.0 | 读取媒体库里**已有哪些集**，与 TMDB 上**应该有哪`些集**求差集找出缺集，再按你配置的搜索源找缺失资源并补齐。本地季集走 **Emby 直连**（TgtoDrive 的接口只给电影/剧集/单集总量，没有「某剧本地集号清单」），应有季集走 TgtoDrive 的 TMDB 代理（**不需要另配 TMDB Key**）。搜索源可选 **TgtoDrive 内置资源检索** / 你自建的**盘搜（PanSou）** / 两者都查；补齐动作可选**仅记录链接**、**转存网盘**、**磁力/电驴离线下载**，默认最保守。含**「仅检测缺失」只读模式**与**「测试连接」按钮**（一次查 TgtoDrive、Emby、TMDB 代理、盘搜四项），并默认开启**预览模式**——先看将要做什么，再决定是否真执行。 | [README](plugins/missing-episodes/README.md) |
 
 ---
 
@@ -43,7 +45,7 @@
 2. 在 TgtoDrive 打开「实用工具 → 我的插件 → 导入插件」。
 3. 选择文件，阅读并勾选信任确认项后导入。
 
-> ⚠️ **不要直接导入 `plugins/<插件 id>/plugin.py`。** 它是插件包内入口，清单写在同一目录的 `plugin.json` 里；把源码入口当「Python 单文件」导入会被拒绝并提示 `Python 单文件必须在顶层定义唯一的 PLUGIN_MANIFEST 常量字典`。可导入的单文件由 `scripts/package_plugin.py` 在文件开头内联 `PLUGIN_MANIFEST` 后生成。
+> ⚠️ **不要直接导入 `plugins/<插件 id>/plugin.py`。** 它是插件包内入口，清单写在同一目录的 `plugin.json` 里；把源码入口当「Python 单文件」导入会被拒绝并提示 `Python 单文件必须在顶层定义唯一的 PLUGIN_MANIFEST 常量字典`。可导入的单文件由 `.github/scripts/package_plugin.py` 在文件开头内联 `PLUGIN_MANIFEST` 后生成。
 >
 > 也可以自行构建：见下方 [本地构建](#本地构建)。
 
@@ -70,12 +72,16 @@
 │   │   └── README.md              # 插件使用文档
 │   ├── wecom-notify/              # 第二个插件，结构与上相同
 │   │   └── marketplace.json       # 可选：市场元数据
-│   └── wecom-call-demo/           # 第三个插件（插件互调示例），结构与上相同
+│   ├── wecom-call-demo/           # 第三个插件（插件互调示例），结构与上相同
+│   ├── ttd-daily-digest/          # 第四个插件（每日推送），结构与上相同
+│   └── missing-episodes/          # 第五个插件（缺集检测与补齐），结构与上相同
 ├── publish.bat                    # 双击即发布（Windows；其调用的本地发布脚本不入库）
 ├── dist/                          # 单文件版产物（可直接导入；zip 不入库，随 Release 分发）
 │   ├── invites-signin.py
 │   ├── wecom-notify.py
-│   └── wecom-call-demo.py
+│   ├── wecom-call-demo.py
+│   ├── ttd-daily-digest.py
+│   └── missing-episodes.py
 ├── plugins.json                   # 插件市场目录 schema_version 1
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md

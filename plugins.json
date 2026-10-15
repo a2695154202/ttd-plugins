@@ -20,6 +20,24 @@
       "notice": ""
     },
     {
+      "id": "missing-episodes",
+      "name": "剧集缺集检测与补齐",
+      "version": "1.0.0",
+      "description": "读取媒体库里已有哪些剧集，与 TMDB 上「应该有」的季集求差集，找出缺集；再按你配置的搜索源去找缺失资源并按选定动作补齐。本地季集走 Emby 直连读取（TgtoDrive 的接口没有提供「某剧本地集号清单」，只有电影/剧集/单集的总量统计），应有季集走 TgtoDrive 的 TMDB 代理，因此不需要另外准备 TMDB 的 API Key。搜索源可选 TgtoDrive 内置资源检索、你自建的盘搜（PanSou）或两者都查；补齐动作可选「仅记录并列出链接」「转存到网盘」「提交磁力/电驴离线下载」，默认最保守的「仅记录」，并且默认开启预览模式——只打印将要执行的操作，不会真正写网盘。附带「测试连接」按钮，可一键检查 TgtoDrive、Emby、TMDB 代理与盘搜四项连通性。内置「仅检测缺失」只读模式，适合先看清缺口再决定是否补齐。",
+      "author": "a2695154202",
+      "category": "tool",
+      "homepage": "https://github.com/a2695154202/ttd-plugins/tree/main/plugins/missing-episodes",
+      "download_url": "https://github.com/a2695154202/ttd-plugins/releases/download/missing-episodes-v1.0.0/missing-episodes.zip",
+      "sha256": "b7835cf92abdba20b30d3561859c8176a2644a298b48808a650d58aeae0e0148",
+      "size": 174439,
+      "python_requires": ">=3.9",
+      "requirements": [
+        "requests>=2.28"
+      ],
+      "status": "active",
+      "notice": "需要 Emby 直连信息（地址 + API Key）才能读取本地季集。补齐动作默认预览模式。"
+    },
+    {
       "id": "ttd-daily-digest",
       "name": "TTD每日推送",
       "version": "1.0.0",
