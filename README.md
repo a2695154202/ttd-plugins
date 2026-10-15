@@ -14,11 +14,13 @@
 
 | 插件 | 版本 | 说明 | 文档 |
 | --- | --- | --- | --- |
-| **药丸论坛签到**<br>`invites-signin` | 1.0.2 | 药丸论坛（invites.fun，Flarum）自动签到。Cookie 优先换取新会话后签到，失败自动回退用户名密码登录；支持仅查询签到状态、查看本地签到历史；结果经 TgtoDrive 已配置的**主通知机器人**推送，也可**同时调用「企业微信通知」插件发送微信通知**（文本或带图卡片，「发送测试通知」同样会走微信链路）；结果页内含运行日志窗口与「运行一次」按钮。 | [README](plugins/invites-signin/README.md) |
-| **企业微信通知**<br>`wecom-notify` | 1.0.0 | 让 TgtoDrive 具备**企业微信（WeCom）应用消息推送**能力，同时作为其他插件的「微信通知出口」。填写企业 ID / 应用 AgentId / 应用 Secret 后，即可把消息发给成员、部门、标签或全体可见成员。消息类型只有 **文本 text** 与 **图文消息 news** 两种 —— 这两种微信插件都能收到；卡片类类型（模板卡片 / 文本卡片 / markdown）已移除，但调用方传入模板卡片 JSON 时会**自动转换成图文**。支持转发代理地址（应对「企业可信IP」限制）、**可选是否经过容器代理**、超长消息自动分段、access_token 本地缓存与发送历史，内置**「发送测试消息」按钮**一键验证通知链路。 | [README](plugins/wecom-notify/README.md) |
-| **微信通知调用示例**<br>`wecom-call-demo` | 1.0.0 | **演示「一个插件如何调用另一个插件」**的最小可用范例：通过 OpenAPI 运行接口调用「企业微信通知」插件发送消息。界面分「**文本消息**」与「**卡片消息**」两个互相独立的子页面，各配收件人与内容（卡片页已预填示例），点对应按钮即发出。发送前先读取目标插件清单，**校验参数的键是否已声明、下拉取值是否在选项内**（提前挡住服务端会拒绝的 HTTP 400）；发送后轮询结果并区分「请求被受理」与「消息真的送达」（`delivery_ok`）。目标插件 id 可配置，便于扩展。 | [README](plugins/wecom-call-demo/README.md) |
-| **TTD每日推送**<br>`ttd-daily-digest` | 1.0.0 | 每天定时把 TgtoDrive 的数据汇总成**一条消息**推送：今日入库、Emby 新增电影/电视剧数量、媒体库总览、最近播放、追剧日历、播放趋势。数据全部经 TgtoDrive 自身的 OpenAPI 读取，**不需要额外配置 Emby 地址或密钥**。可推 Telegram（用 ttd 已配置的通知机器人）与微信（调用「企业微信通知」插件，凭据由它自己保管），可单选也可双发；板块自由勾选、每项可设条数上限，版式支持纯文本与 Markdown。右侧有「发送测试推送」按钮一键验证链路。 | [README](plugins/ttd-daily-digest/README.md) |
-| **剧集缺集检测与补齐**<br>`missing-episodes` | 1.0.0 | 读取媒体库里**已有哪些集**，与 TMDB 上**应该有哪`些集**求差集找出缺集，再按你配置的搜索源找缺失资源并补齐。本地季集走 **Emby 直连**（TgtoDrive 的接口只给电影/剧集/单集总量，没有「某剧本地集号清单」），应有季集走 TgtoDrive 的 TMDB 代理（**不需要另配 TMDB Key**）。搜索源可选 **TgtoDrive 内置资源检索** / 你自建的**盘搜（PanSou）** / 两者都查；补齐动作可选**仅记录链接**、**转存网盘**、**磁力/电驴离线下载**，默认最保守。含**「仅检测缺失」只读模式**与**「测试连接」按钮**（一次查 TgtoDrive、Emby、TMDB 代理、盘搜四项），并默认开启**预览模式**——先看将要做什么，再决定是否真执行。 | [README](plugins/missing-episodes/README.md) |
+| **药丸论坛签到**<br>`invites-signin` | 1.0.2 | 药丸论坛（invites.fun）自动签到，结果可通知到 TgtoDrive 机器人或企业微信。 | [README](plugins/invites-signin/README.md) |
+| **企业微信通知**<br>`wecom-notify` | 1.0.0 | 向企业微信发送应用消息（文本 / 图文），可被其他插件调用。 | [README](plugins/wecom-notify/README.md) |
+| **微信通知调用示例**<br>`wecom-call-demo` | 1.0.0 | 演示插件互相调用：调用「企业微信通知」插件发送消息。 | [README](plugins/wecom-call-demo/README.md) |
+| **TTD每日推送**<br>`ttd-daily-digest` | 1.0.0 | 把 TgtoDrive 的媒体库数据汇总成一条日报，推送到 Telegram 或企业微信。 | [README](plugins/ttd-daily-digest/README.md) |
+| **剧集缺集检测与补齐**<br>`missing-episodes` | 1.0.0 | 比对本地剧集与 TMDB 应有的季集找出缺集，并按你的配置搜索补齐（默认只记录，不写盘）。 | [README](plugins/missing-episodes/README.md) |
+
+上面每行只写一句话，**完整功能、参数与排错请点右侧 README**。
 
 ---
 

@@ -7,7 +7,7 @@ PLUGIN_MANIFEST = {
   'id': 'invites-signin',
   'name': '药丸论坛签到',
   'version': '1.0.2',
-  'description': '药丸论坛（invites.fun，Flarum）自动签到。优先用 Cookie 刷新会话后签到，失败自动回退用户名密码登录签到；支持仅查询签到状态、查看本地签到历史、读取 TgtoDrive 通知机器人列表。结果通知渠道由用户自选：可只发 TgtoDrive 通知机器人、只发企业微信通知、两者都发或都不发，并可单独指定用哪个机器人。执行结果页提供指标卡片、明细表与运行日志。定时执行请在「我的插件 → 定时执行」中配置 cron。',
+  'description': '药丸论坛（invites.fun）自动签到，结果可通知到 TgtoDrive 机器人或企业微信。',
   'author': 'a2695154202',
   'entry': 'plugin.py',
   'timeout': 300,

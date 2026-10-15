@@ -5,9 +5,9 @@
 PLUGIN_MANIFEST = {
   'schema_version': 1,
   'id': 'missing-episodes',
-  'name': '剧集缺集检测与补齐',
+  'name': '剧集缺集检测与补齐（未开发完成）',
   'version': '1.0.0',
-  'description': '读取媒体库里已有哪些剧集，与 TMDB 上「应该有」的季集求差集，找出缺集；再按你配置的搜索源去找缺失资源并按选定动作补齐。本地季集走 Emby 直连读取（TgtoDrive 的接口没有提供「某剧本地集号清单」，只有电影/剧集/单集的总量统计），应有季集走 TgtoDrive 的 TMDB 代理，因此不需要另外准备 TMDB 的 API Key。搜索源可选 TgtoDrive 内置资源检索、你自建的盘搜（PanSou）或两者都查；补齐动作可选「仅记录并列出链接」「转存到网盘」「提交磁力/电驴离线下载」，默认最保守的「仅记录」，并且默认开启预览模式——只打印将要执行的操作，不会真正写网盘。附带「测试连接」按钮，可一键检查 TgtoDrive、Emby、TMDB 代理与盘搜四项连通性。内置「仅检测缺失」只读模式，适合先看清缺口再决定是否补齐。',
+  'description': '🚧 未开发完成，仅供测试。比对本地剧集与 TMDB 应有的季集找出缺集，并按你的配置搜索补齐（默认只记录，不写盘）。',
   'author': 'a2695154202',
   'entry': 'plugin.py',
   'timeout': 1800,
@@ -68,6 +68,80 @@ PLUGIN_MANIFEST = {
       'help': 'Emby 后台「设置 → API 密钥」里创建的密钥，用于读取剧集与集列表（只读）。\n\n留空时同上，尝试复用 TgtoDrive 影视设置里的 Emby 配置。密钥不会出现在日志或结果页中。',
     },
     {
+      'name': 'tmdb_source',
+      'label': '「应有季集」的数据源',
+      'type': 'select',
+      'default': 'auto',
+      'options': [
+        {
+          'label': '自动（填了 API Key 就直连 TMDB，否则走 TgtoDrive 代理）',
+          'value': 'auto',
+        },
+        {
+          'label': 'TgtoDrive 详情代理',
+          'value': 'ttd',
+        },
+        {
+          'label': '直连 TMDB（用下面的 API Key）',
+          'value': 'direct',
+        },
+      ],
+      'help': '决定「每一季应该有哪些集」从哪里读。\n\n走 **TgtoDrive 详情代理**时，该季集接口「只有当前详情配置支持完整季集模式时可用」；没开时会返回 HTTP 409 `TMDB_READONLY_MODE_INACTIVE`，缺集检测就没有数据源。\n\n此时**最省事的做法是填上 TMDB API Key 并保持「自动」** —— 插件会直连 api.themoviedb.org，不受那个模式约束。',
+    },
+    {
+      'name': 'tmdb_api_key',
+      'label': 'TMDB API Key',
+      'type': 'password',
+      'default': '',
+      'placeholder': 'themoviedb.org → 设置 → API 里申请（用 v3 的 API Key）',
+      'help': '本插件**自己直连 TMDB** 时用的密钥。填了它并把数据源保持「自动」，就会绕开 TgtoDrive 详情代理的「完整季集模式」限制。\n\n留空则完全走 TgtoDrive 代理。密钥走查询参数发给 TMDB，插件已做脱敏，不会出现在日志或结果页中。',
+    },
+    {
+      'name': 'tmdb_base_url',
+      'label': 'TMDB 接口地址',
+      'type': 'text',
+      'default': 'https://api.themoviedb.org/3',
+      'placeholder': 'https://api.themoviedb.org/3',
+      'help': '直连 TMDB 时的接口根地址。容器访问不了官方域名时，可以填一个自建 / 第三方的 TMDB 反代地址（接口结构须与官方一致）。',
+    },
+    {
+      'name': 'tmdb_language',
+      'label': 'TMDB 语言',
+      'type': 'text',
+      'default': 'zh-CN',
+      'placeholder': 'zh-CN',
+      'help': '影响剧集名称与简介的语言；**不影响集号与播出日期**（缺集比对用的是后两者）。',
+    },
+    {
+      'name': 'tmdb_proxy',
+      'label': 'TMDB 代理地址（可选）',
+      'type': 'text',
+      'default': '',
+      'placeholder': 'http://192.168.1.2:7890',
+      'help': '本插件直连 TMDB 时使用的代理。填了就**优先用它**，且**只对 TMDB 生效**（不影响 TgtoDrive / Emby / 盘搜的请求）。\n\n留空则按下面的「代理策略」自动挑选。',
+    },
+    {
+      'name': 'tmdb_proxy_mode',
+      'label': 'TMDB 代理策略',
+      'type': 'select',
+      'default': 'auto',
+      'options': [
+        {
+          'label': '自动：TgtoDrive 网络代理 → 容器环境变量 → 直连（逐个尝试）',
+          'value': 'auto',
+        },
+        {
+          'label': '只用容器环境变量代理',
+          'value': 'env',
+        },
+        {
+          'label': '不使用代理（直连）',
+          'value': 'off',
+        },
+      ],
+      'help': '容器出网通常需要代理。\n\n⚠️ 容器里的 `HTTP_PROXY` / `HTTPS_PROXY` 往往是**平台侧内部代理**，拿它出网到公网会被送到错处（实测返回 502）。所以「自动」会**优先用 TgtoDrive 自己配的网络代理**，失败再依次退到环境变量、直连 —— 只在这类「代理 / 网关层」错误时才换下一个，不会重复打扰 TMDB。',
+    },
+    {
       'name': 'library_ids',
       'label': '媒体库 id（可留空）',
       'type': 'text',
@@ -82,7 +156,7 @@ PLUGIN_MANIFEST = {
       'default': 50,
       'min': 1,
       'max': 2000,
-      'help': '每次运行最多检测多少部剧，防止媒体库很大时超时（插件超时 1800 秒）。检测按剧名排序，从前往后取。\n\n想全量检测就把它调大；配合定时执行分批跑也可以。',
+      'help': '每次运行最多检测多少部剧，防止媒体库很大时撞上插件超时（1800 秒）。\n\n**媒体库比它大时不会漏剧**：插件会记录扫描进度，本次从上次的位置往后取，下次接着往后轮转（顺序按剧名排序、稳定不变，所以轮转能覆盖全库）。中途撞上时间预算也会保存进度并带着已完成的结果收工，不会白跑。\n\n要一次扫完就调大；配合「定时执行」分批跑也可以。',
     },
     {
       'name': 'only_aired',
@@ -217,24 +291,31 @@ PLUGIN_MANIFEST = {
     'components': [
       {
         'type': 'heading',
-        'text': '🎬 剧集缺集检测与补齐',
-      },
-      {
-        'type': 'markdown',
-        'text': '把「本地已有哪些集」与「TMDB 应该有哪`些集」求差集，找出缺集；按你配置的搜索源找缺失资源，并按选定动作补齐。\n\n**建议第一次这样用**：① 点「测试连接」确认各项都通（尤其 **TMDB 季集详情（关键）** 这一项，它不通就没法确定「应该有哪些集」）→ ② 点「检查缺失（只读）」看清缺口 → ③ 确认无误后再执行补齐（默认**预览模式**，只打印将要做什么）。',
+        'text': '🚧 剧集缺集检测与补齐 · 未开发完成',
       },
       {
         'type': 'alert',
-        'text': '两个前提：① 需要 **TgtoDrive 的 OpenAPI 令牌**（读 TMDB 详情与资源检索）；② 需要 **Emby 直连信息**（地址 + API Key）—— TgtoDrive 的接口没有「某剧本地集号清单」，所以本地季集只能直连 Emby 读取。Emby 两项留空时，插件会尝试复用 TgtoDrive 影视设置里已配置的 Emby。',
+        'text': '本插件尚未开发完成 —— 功能、参数与结果格式都可能变动，请仅用于测试，不要长期依赖。',
         'style': {
           'tone': 'warning',
         },
       },
       {
-        'type': 'text',
-        'text': '**结果有三种，别把第三种当成第二种**：「有缺失」＝比出了具体缺集；「无缺失」＝每个季都比对成功且集号齐全；**「⚠️ 无法判定」＝某些季的「应有集数」没读成**（既不算缺失、也不算完整）。遇到「无法判定」请先点「测试连接」看 **TMDB 季集详情（关键）** 的结论 —— 规范说明该接口「只有当前详情配置支持完整季集模式时可用」。',
+        'type': 'markdown',
+        'text': '把「本地已有哪些集」与「TMDB 应该有哪些集」求差集找出缺集，再按你配置的搜索源找资源、按选定动作补齐。\n\n**第一次用，按这个顺序来**（右侧三个按钮按 ①②③ 编号）：\n\n1. 点「**① 测试连接**」—— 一次确认 TgtoDrive / Emby / TMDB / 盘搜都通，其中 **TMDB 季集详情（关键）** 那一项最重要，它不通就无法确定「应该有哪些集」；\n2. 点「**② 检查缺失（只读）**」—— 看清缺口，**不写任何数据**；\n3. 确认无误后再点「**③ 检测并补齐**」—— 默认**预览模式**，只打印将要做什么。',
+      },
+      {
+        'type': 'alert',
+        'text': '开始前确认两件事：① TgtoDrive 的 OpenAPI 令牌（在「实用工具 → OpenAPI」创建）；② 能直连的 Emby 地址 + API Key —— TgtoDrive 的接口没有「某剧本地集号清单」，所以本地季集只能直连 Emby 读取。Emby 这两项留空时，插件会自动尝试复用「TgtoDrive → 影视发现 → Emby 设置」里已配好的那份，配过就不用再填。',
         'style': {
-          'tone': 'muted',
+          'tone': 'primary',
+        },
+      },
+      {
+        'type': 'alert',
+        'text': '结果有三种，别把第三种当成第二种：「有缺失」＝比出了具体缺集；「无缺失」＝每个季都比对成功且集号齐全；「⚠️ 无法判定」＝某些季的「应有集数」根本没读成（既不算缺失、也不算完整）。遇到「无法判定」先点「测试连接」看 TMDB 季集详情（关键）这一项 —— 不通就到「TMDB 设置」填上 API Key 改用直连即可绕过（TgtoDrive 详情页没开「完整季集模式」时，它的季集接口会返回 409）。',
+        'style': {
+          'tone': 'warning',
         },
       },
       {
@@ -252,11 +333,11 @@ PLUGIN_MANIFEST = {
                 'children': [
                   {
                     'type': 'card',
-                    'label': '连接设置',
+                    'label': '① 连接设置',
                     'children': [
                       {
                         'type': 'markdown',
-                        'text': '**TgtoDrive** 与 **Emby** 两处连接。Emby 必须能直连（同容器可用局域网地址），否则读不到本地季集。',
+                        'text': '**这一页是必填项**：TgtoDrive 与 Emby 两处连接。\n\n- **TgtoDrive** —— 用来读 TMDB 详情、做资源检索、转存与离线下载。同容器一般就是 `http://127.0.0.1:12366`。\n- **Emby** —— **必须能直连**，否则读不到「本地已有哪些集」。同容器可以填局域网地址（如 `http://192.168.1.10:8096`），填网页入口带 `/emby` 也行。\n\n填完建议先点右侧「**① 测试连接**」验证一下。',
                       },
                       {
                         'type': 'field',
@@ -281,11 +362,48 @@ PLUGIN_MANIFEST = {
                   },
                   {
                     'type': 'card',
-                    'label': '检测范围',
+                    'label': '② TMDB 设置',
                     'children': [
                       {
                         'type': 'markdown',
-                        'text': '控制检测哪些剧、哪些集算「应该有」。默认设置已按参考插件的最佳实践调好，**不建议改动**「只统计已播出的集」。',
+                        'text': '**「每一季应该有哪些集」从这里取。**\n\n默认走 **TgtoDrive 的详情代理**。但该代理的季集接口「**只有当前详情配置支持完整季集模式时可用**」—— 没开时会返回 HTTP 409 `TMDB_READONLY_MODE_INACTIVE`，缺集检测就没有数据源。\n\n**最省事：填上 TMDB API Key，数据源保持「自动」**，插件就会直连 `api.themoviedb.org`，不受上面那个模式约束。API Key 在 [themoviedb.org](https://www.themoviedb.org/settings/api) 注册后到「设置 → API」申请（v3 的 API Key 即可）。\n\n直连是本插件**自己**发的请求、不经过 TgtoDrive，所以容器要能出网；出不了网就填最下面的代理。',
+                      },
+                      {
+                        'type': 'field',
+                        'name': 'tmdb_source',
+                      },
+                      {
+                        'type': 'field',
+                        'name': 'tmdb_api_key',
+                      },
+                      {
+                        'type': 'field',
+                        'name': 'tmdb_base_url',
+                      },
+                      {
+                        'type': 'field',
+                        'name': 'tmdb_language',
+                      },
+                      {
+                        'type': 'divider',
+                      },
+                      {
+                        'type': 'field',
+                        'name': 'tmdb_proxy',
+                      },
+                      {
+                        'type': 'field',
+                        'name': 'tmdb_proxy_mode',
+                      },
+                    ],
+                  },
+                  {
+                    'type': 'card',
+                    'label': '③ 检测范围',
+                    'children': [
+                      {
+                        'type': 'markdown',
+                        'text': '控制检测**哪些剧**、**哪些集算「应该有」**。\n\n默认值已按最佳实践调好，**不建议改动**「只统计已播出的集」—— 关掉它会把尚未开播的集也算成缺集，导致大量误报。\n\n「单次检测上限」默认 50 部。媒体库更大时**不会漏**：插件会记录**扫描进度**，每次接着上次的位置往后轮转，多跑几次即可覆盖全库（顺序按剧名排序，稳定不变）。',
                       },
                       {
                         'type': 'field',
@@ -318,11 +436,11 @@ PLUGIN_MANIFEST = {
                   },
                   {
                     'type': 'card',
-                    'label': '补齐设置',
+                    'label': '④ 补齐设置',
                     'children': [
                       {
                         'type': 'markdown',
-                        'text': '去哪里找资源、找到后做什么。\n\n**这里的参数大多直接从 TgtoDrive 读，不需要重填**：转存目标网盘 / 点数上限取自 TgtoDrive 的影视设置；**RE0** 是 TgtoDrive 集成的服务，用它只要在 TgtoDrive 里授权过即可（本插件只读它的授权状态）；可限定的「资源来源」清单也由 TgtoDrive 提供。\n\n转存与离线下载会**真实写网盘**，所以默认「仅记录」+ **预览模式开启**。',
+                        'text': '去哪里找资源、找到后做什么。\n\n**这里的参数大多直接从 TgtoDrive 读，不需要重填**：转存目标网盘 / 点数上限取自 TgtoDrive 的影视设置；**RE0** 是 TgtoDrive 集成的服务，只要在 TgtoDrive 里授权过就能用（本插件只读它的授权状态）；可限定的「资源来源」清单也由 TgtoDrive 提供。\n\n⚠️ 「转存到网盘」与「提交离线下载」会**真实写网盘、可能消耗会员点数**。所以默认是「仅记录并列出链接」+ **预览模式开启** —— 先跑一次核对候选是否正确，再关掉预览真正执行。',
                       },
                       {
                         'type': 'field',
@@ -376,47 +494,78 @@ PLUGIN_MANIFEST = {
             },
             'children': [
               {
-                'type': 'field',
-                'name': 'func',
-              },
-              {
-                'type': 'button',
-                'label': '测试连接',
-                'action': 'run',
-                'params': {
-                  'func': 'test',
-                },
-                'style': {
-                  'tone': 'primary',
-                  'size': 'large',
-                  'variant': 'outline',
-                },
-              },
-              {
-                'type': 'button',
-                'label': '检查缺失（只读）',
-                'action': 'run',
-                'params': {
-                  'func': 'check',
-                },
-                'style': {
-                  'tone': 'primary',
-                  'size': 'large',
-                  'variant': 'solid',
-                },
-              },
-              {
-                'type': 'button',
-                'label': '检测并补齐',
-                'action': 'run',
-                'params': {
-                  'func': 'fill',
-                },
-                'style': {
-                  'tone': 'success',
-                  'size': 'large',
-                  'variant': 'solid',
-                },
+                'type': 'card',
+                'label': '⚡ 快捷操作',
+                'children': [
+                  {
+                    'type': 'field',
+                    'name': 'func',
+                  },
+                  {
+                    'type': 'markdown',
+                    'text': '下面四个按钮会**覆盖**上面选的「执行功能」，点哪个就跑哪个。',
+                  },
+                  {
+                    'type': 'button',
+                    'label': '① 测试连接',
+                    'action': 'run',
+                    'params': {
+                      'func': 'test',
+                    },
+                    'style': {
+                      'tone': 'primary',
+                      'size': 'large',
+                      'variant': 'outline',
+                    },
+                  },
+                  {
+                    'type': 'button',
+                    'label': '② 检查缺失（只读）',
+                    'action': 'run',
+                    'params': {
+                      'func': 'check',
+                    },
+                    'style': {
+                      'tone': 'primary',
+                      'size': 'large',
+                      'variant': 'solid',
+                    },
+                  },
+                  {
+                    'type': 'button',
+                    'label': '③ 检测并补齐',
+                    'action': 'run',
+                    'params': {
+                      'func': 'fill',
+                    },
+                    'style': {
+                      'tone': 'success',
+                      'size': 'large',
+                      'variant': 'solid',
+                    },
+                  },
+                  {
+                    'type': 'button',
+                    'label': '查看生效配置',
+                    'action': 'run',
+                    'params': {
+                      'func': 'config',
+                    },
+                    'style': {
+                      'tone': 'default',
+                      'size': 'large',
+                      'variant': 'outline',
+                    },
+                  },
+                  {
+                    'type': 'divider',
+                  },
+                  {
+                    'type': 'link',
+                    'href': 'https://github.com/a2695154202/ttd-plugins/blob/main/plugins/missing-episodes/README.md',
+                    'label': '📖 打开完整说明与常见问题（README）',
+                  },
+                ],
               },
             ],
           },
@@ -426,15 +575,18 @@ PLUGIN_MANIFEST = {
         'type': 'divider',
       },
       {
-        'type': 'text',
-        'text': '「仅检测缺失」是纯只读操作：不写网盘、不改媒体库、不动 TgtoDrive 的任何设置。补齐动作默认走预览，只有你显式关掉「预览模式」才会真正执行。',
-        'style': {
-          'tone': 'muted',
-        },
+        'type': 'card',
+        'label': '⏰ 定时执行',
+        'children': [
+          {
+            'type': 'markdown',
+            'text': '到「**我的插件 → 定时执行**」新建计划，选本插件，运行参数填 `func=check`。\n\n建议先用 `check` 观察一段时间，确认结果可信后再改成 `fill`。媒体库很大时**不用一次扫完** —— 插件会记录扫描进度，每次接着上次的位置往后轮转，多跑几次即可覆盖全库。',
+          },
+        ],
       },
       {
         'type': 'text',
-        'text': '定时执行：在「我的插件 → 定时执行」新建计划，选本插件、运行参数填 func=check（或 fill），建议先用 check 观察一段时间，稳定后再切 fill。',
+        'text': '「仅检测缺失」是纯只读操作：不写网盘、不改媒体库、不动 TgtoDrive 的任何设置。补齐动作默认走预览，只有你显式关掉「预览模式」才会真正执行。',
         'style': {
           'tone': 'muted',
         },
@@ -447,7 +599,7 @@ PLUGIN_MANIFEST = {
 # -*- coding: utf-8 -*-
 """剧集缺集检测与补齐 · TgtoDrive 插件
 
-**做什么**：读取「本地媒体库里已有哪些剧集」与「按 TMDB 应该有哪`些剧集」，求差集得到缺集；
+**做什么**：读取「本地媒体库里已有哪些剧集」与「按 TMDB 应该有哪些剧集」，求差集得到缺集；
 然后按用户配置的搜索源去找缺失资源，并按选定动作补齐。
 
 三个数据源，缺一不可：
@@ -457,8 +609,13 @@ PLUGIN_MANIFEST = {
    （`/api/emby/*` 全是看板/代理/封面类；`/api/emby/dashboard` 只给电影/剧集/单集**总量**，
    `/api/emby/latest` 只给最近入库）。MoviePilot 的同名插件靠 `MediaServerChain.episodes()`，
    在 TTD 里对应不到任何公开接口，因此本插件让用户填 Emby 地址 + API Key 直连读取。
-2. **应有季集** —— 走 TgtoDrive 的 TMDB 代理（`/api/media/details/...`），
-   这样用户不必再单独准备 TMDB 的 API Key。
+2. **应有季集** —— 两个数据源二选一（默认「自动」）：
+   * 走 **TgtoDrive 的 TMDB 代理**（`/api/media/details/...`），不必准备 TMDB 的 API Key；
+     但该代理的季集接口「**只有当前详情配置支持完整季集模式时可用**」，未开启时返回
+     `HTTP 409 TMDB_READONLY_MODE_INACTIVE`，整条链路就没有数据源；
+   * 或 **本插件直连 TMDB**（`api.themoviedb.org`，用户自填 API Key）——
+     **不受上面那个模式约束**，并可自选接口地址、语言与代理。
+   「自动」= 填了 Key 就直连，否则走代理。见 `_TmdbClient` 与 `_use_direct_tmdb()`。
 3. **缺失资源的搜索源** —— 可选 TgtoDrive 内置资源检索（`/api/media/resources/search`），
    或用户自建的**盘搜（PanSou）**实例（默认端口 8888），或两者都查。
 
@@ -478,6 +635,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from datetime import datetime, date
 from pathlib import Path
 
@@ -491,16 +649,13 @@ except Exception:  # pragma: no cover
 # 常量
 # ---------------------------------------------------------------------------
 
-PLUGIN_NAME = "剧集缺集检测与补齐"
-PLUGIN_ID = "missing-episodes"
+PLUGIN_NAME = "剧集缺集检测与补齐（未开发完成）"
 
 DEFAULT_BASE_URL = "http://127.0.0.1:12366"
 DEFAULT_PANSOU_URL = "http://127.0.0.1:8888"
 
 CONNECT_TIMEOUT = 10
 READ_TIMEOUT = 60          # TMDB / 盘搜 / 网盘转存都可能偏慢
-JOB_POLL_ATTEMPTS = 8
-JOB_POLL_INTERVAL = 3
 
 # 单次检测的**软时间预算**（秒）。清单里声明的 timeout 是 1800，这里留 300 秒余量
 # 给收尾（结果序列化、补齐阶段的搜索请求等）。到点就带结果收工并保存进度，
@@ -514,6 +669,45 @@ TOTAL_TIME_BUDGET = 1650
 
 # 扫描进度文件名（写在 data_dir：更新插件不丢，卸载才删）
 CURSOR_FILE = "scan_cursor.json"
+
+# TgtoDrive 在「详情页未启用完整 TMDB 季集模式」时，季集接口
+# `/api/media/details/tmdb/tv/{id}/season/{n}` 返回 **HTTP 409 + 该错误码**：
+#   {"code":"TMDB_READONLY_MODE_INACTIVE","error":"当前详情页不使用完整 TMDB 季集模式"}
+# 命中它说明缺集检测的**前置条件不满足**（拿不到「应该有哪些集」）—— 必须提前拦住整轮扫描，
+# 否则会演变成「50 部剧 × 每季一条告警」的刷屏，最后得到一份全是「无法判定」的无用结果。
+TMDB_READONLY_ERROR_CODE = "TMDB_READONLY_MODE_INACTIVE"
+
+# TMDB **直连**（不走 TgtoDrive 的详情代理）时的默认地址与语言。
+# 为什么要内置直连：TgtoDrive 的 `/api/media/details/tmdb/tv/{id}/season/{n}`
+# 「只有当前详情配置支持完整季集模式时可用」，而该模式在部分环境里打不开
+# （返回 409 TMDB_READONLY_MODE_INACTIVE）—— 一旦如此，缺集检测就完全没有数据源。
+# 直连 TMDB 不受该模式约束。
+DEFAULT_TMDB_BASE = "https://api.themoviedb.org/3"
+DEFAULT_TMDB_LANGUAGE = "zh-CN"
+
+# 「应有季集」的数据源
+# 注意：这里**不放**中文标签表 —— 标签以 plugin.json 的 options 为唯一来源
+# （清单里必须写一份给界面用），源码再抄一份只会两边漂移。人话说明由
+# `_tmdb_source_note()` 按「本次实际用了哪个」动态拼出。
+TMDB_SRC_AUTO = "auto"
+TMDB_SRC_TTD = "ttd"
+TMDB_SRC_DIRECT = "direct"
+VALID_TMDB_SOURCES = (TMDB_SRC_AUTO, TMDB_SRC_TTD, TMDB_SRC_DIRECT)
+
+# TMDB 直连时的代理策略
+TMDB_PROXY_AUTO = "auto"
+TMDB_PROXY_ENV = "env"
+TMDB_PROXY_OFF = "off"
+VALID_TMDB_PROXY_MODES = (TMDB_PROXY_AUTO, TMDB_PROXY_ENV, TMDB_PROXY_OFF)
+TMDB_PROXY_LABELS = {
+    TMDB_PROXY_AUTO: "自动：TgtoDrive 网络代理 → 容器环境变量 → 直连（逐个尝试）",
+    TMDB_PROXY_ENV: "只用容器环境变量代理",
+    TMDB_PROXY_OFF: "不使用代理（直连）",
+}
+
+# 这几个状态码来自**代理 / 网关本身**，说明请求没到 TMDB —— 换下一个代理重试是安全的，
+# 不会造成「重复请求把数据搞脏」。TMDB 自身的响应（200/401/404/429…）必须立刻停。
+PROXY_LAYER_STATUS = (407, 502, 503, 504, 520, 521, 522, 523, 524)
 
 # 平台 `table` 组件的行数上限（协议清单：≤30 列 200 行）。超出会被拒绝渲染，
 # 导致整个结果页看不到 —— 必须自己截断并说明。
@@ -580,6 +774,29 @@ SECRET_HINTS = ("secret", "token", "password", "passwd", "pwd", "apikey",
 
 
 # ---------------------------------------------------------------------------
+# 预编译正则
+# ---------------------------------------------------------------------------
+# 这些模式都在**按条循环**的路径上（每部剧 / 每季 / 每集 / 每个参数键各调一次）。
+# 写成 `re.sub("字面量", …)` 每次都要走一遍「字符串 → 缓存查找」，量大了就是白开销；
+# 提前编译成常量既省这一次查表，也把「同一个模式在多处出现」收敛成一个来源。
+_HTTP_URL_RE = re.compile(r"^https?://", re.I)
+_URL_CRED_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)[^/@\s]*:[^/@\s]*@")
+_KEY_NORM_RE = re.compile(r"[^a-z0-9]")
+_IDS_SPLIT_RE = re.compile(r"[,\uFF0C|;；\s]+")
+_WS_SPLIT_RE = re.compile(r"\s+")
+_DATE_PREFIX_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})")
+_SEASON_SPECIAL_RE = re.compile(r"特别|特典|specials?", re.I)
+_SEASON_EN_RE = re.compile(r"(?:season|s)\s*0*(\d{1,3})", re.I)
+_SEASON_CN_RE = re.compile(r"第\s*0*(\d{1,3})\s*季")
+# 剧名归一化：依次抹掉集数标注、季标注、方括号 / 圆括号里的补充说明
+_TITLE_EPISODE_RE = re.compile(r"(?i)\bS\d{1,2}(E\d{1,3})?\b")
+_TITLE_SEASON_EN_RE = re.compile(r"(?i)\b(season|seasons)\s*\d+")
+_TITLE_SEASON_CN_RE = re.compile(r"第\s*[0-9一二三四五六七八九十]+\s*[季部]")
+_TITLE_BRACKET_RE = re.compile(r"\[[^\]]*\]")
+_TITLE_PAREN_RE = re.compile(r"[（(][^）)]*[）)]")
+
+
+# ---------------------------------------------------------------------------
 # 基础工具
 # ---------------------------------------------------------------------------
 
@@ -589,15 +806,15 @@ class _Logger(object):
     MAX_LINES = 2000
 
     def __init__(self):
-        self.lines = []
+        # 用 deque(maxlen=…) 而不是 list：超过上限时 deque 由 C 层直接把最旧的一行挤掉，
+        # 是 O(1)；此前用 list + `del lines[:n]`，**每写一行都要搬移整个列表**
+        # （2000 行上限下实测慢 100 倍以上）。长任务（几百部剧）日志必然溢出，
+        # 这个差别会被放大到上万行。
+        self.lines = deque(maxlen=self.MAX_LINES)
 
     def _emit(self, level, message):
         line = "[%s] [%s] %s" % (datetime.now().strftime("%H:%M:%S"), level, message)
-        self.lines.append(line)
-        # 超过上限时**丢最旧的**，保留最新 —— 否则长任务（几百部剧）会把最后的
-        # 汇总与错误信息挤掉，结果页只看到开头的正常行、以为一切顺利。
-        if len(self.lines) > self.MAX_LINES:
-            del self.lines[:len(self.lines) - self.MAX_LINES]
+        self.lines.append(line)      # 超出 maxlen 时自动丢弃最旧的一行
         try:
             print(line, flush=True)
         except Exception:
@@ -629,18 +846,47 @@ def _as_bool(value, default=False):
     return default
 
 
-def _as_int(value, default=0):
+def _finite_int(value):
+    """把可能是 ``inf`` / ``nan`` 的值安全地转成 ``int``；转不了返回 ``None``。
+
+    为什么需要单独一个函数：``int(float("inf"))`` 抛的是 **OverflowError**，
+    而 ``int(float("nan"))`` 抛的是 ValueError —— 只捕获后者会让 ``inf`` /
+    ``1e400`` 这类取值**直接穿透出去**。参数表单是 number 类型，但平台/定时计划
+    可能把原始字符串原样带进来；schema-less 的响应里更可能出现任意值。
+    这里统一兜住，并且**显式判非有限浮点**，不依赖异常类型。
+    """
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        try:
+            if value != value or value in (float("inf"), float("-inf")):
+                return None
+            return int(value)
+        except (ValueError, OverflowError, TypeError):
+            return None
+    text = str(value or "").strip()
+    if not text:
+        return None
     try:
-        if value in (None, ""):
-            return default
-        return int(float(str(value).strip()))
+        number = float(text)
     except (TypeError, ValueError):
-        return default
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    try:
+        return int(number)
+    except (ValueError, OverflowError, TypeError):
+        return None
+
+
+def _as_int(value, default=0):
+    number = _finite_int(value)
+    return default if number is None else number
 
 
 def _is_secret_key(key):
     """键名含凭据特征片段即视为敏感（归一化后比较，比枚举更抗新增字段）。"""
-    norm = re.sub(r"[^a-z0-9]", "", str(key or "").lower())
+    norm = _KEY_NORM_RE.sub("", str(key or "").lower())
     if not norm:
         return False
     return any(hint.replace("_", "") in norm for hint in SECRET_HINTS)
@@ -661,8 +907,18 @@ def _mask(value, keep=4):
     return "***%s" % text[-keep:]
 
 
+def _scrub_url_credentials(text):
+    """把 URL 里的 ``user:pass@`` 抹成 ``***@``。
+
+    参数回显会把「TMDB 代理地址 / Emby 地址 / TgtoDrive 地址 / 盘搜地址」原样打出来，
+    而这些地址**可能内嵌凭据**（``http://user:pass@host:8080``）。它们不是"密钥字段"，
+    走不到 :func:`_is_secret_key` 那条路 —— 不在这里单独处理就会把凭据写进日志。
+    """
+    return _URL_CRED_RE.sub(r"\1***@", str(text or ""))
+
+
 def _mask_params(params, max_len=600):
-    """把参数渲染成可安全写进日志的一行（敏感键只回显长度）。"""
+    """把参数渲染成可安全写进日志的一行（敏感键只回显长度，URL 内嵌凭据会被抹掉）。"""
     if not isinstance(params, dict) or not params:
         return "（空）"
     parts = []
@@ -671,7 +927,7 @@ def _mask_params(params, max_len=600):
             text = "***（已填写，长度 %d）" % len(str(value)) if value else "（空）"
         else:
             text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-            text = str(text).replace("\n", "\\n")
+            text = _scrub_url_credentials(str(text).replace("\n", "\\n"))
             if len(text) > max_len:
                 text = text[:max_len] + "…（共 %d 字）" % len(str(value))
         parts.append("%s=%s" % (key, text))
@@ -713,17 +969,68 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_URLLIB_OPENER = urllib.request.build_opener(_NoRedirect)
+# urllib 的 opener **构建**实测约 20 毫秒/次（要重建整套 handler）。因此：
+#   * 默认 opener 延迟到首次真正发请求时才建 —— 不让模块导入白付这笔钱；
+#   * 带代理的 opener 按「代理配置」缓存 —— TMDB 直连对**每个**请求都显式传 proxies，
+#     不缓存的话一次大库扫描会白白多花好几秒（实测 300 次请求 ≈ 6 秒）。
+# 插件是同步单线程模型，这里不需要加锁。
+_URLLIB_OPENERS = {}
 
 
-def _http_json(method, url, headers=None, body=None, timeout=None):
-    """发 JSON 请求，返回 ``(status, text, data)``；网络异常时 status 为 None。"""
+def _urllib_opener(proxies=None):
+    """返回（并缓存）与给定代理配置对应的 urllib opener。
+
+    ``proxies`` 语义与 :func:`_http_json` 一致：``None`` = 用默认 opener；
+    ``{"http": …, "https": …}``（值可为 ``None``）= 显式指定 / 显式绕过。
+    """
+    if proxies is None:
+        key = None
+    else:
+        # 转成可哈希且与字典顺序无关的键，保证同一份代理配置复用同一个 opener
+        key = frozenset((str(k), "" if v is None else str(v)) for k, v in proxies.items())
+    opener = _URLLIB_OPENERS.get(key)
+    if opener is None:
+        if key is None:
+            opener = urllib.request.build_opener(_NoRedirect)
+        else:
+            handler_map = {scheme: value for scheme, value in proxies.items() if value}
+            opener = urllib.request.build_opener(
+                _NoRedirect, urllib.request.ProxyHandler(handler_map))
+        _URLLIB_OPENERS[key] = opener
+    return opener
+
+
+def _with_query(url, params):
+    """把 ``params`` 拼进 URL 的查询串（保留 URL 上已有的查询串）。
+
+    三个客户端都要拼查询串，此前同一段 ``url += ("&" if "?" in url else "?") + urlencode(...)``
+    各写了一遍 —— 收敛到这里，顺便保证「空 params 不产生一个多余的 ``?``」。
+    """
+    if not params:
+        return url
+    return url + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+
+
+def _is_http_url(value):
+    """判断是不是 http(s) 地址（``configured`` 属性共用）。"""
+    return bool(_HTTP_URL_RE.match(str(value or "").strip()))
+
+
+def _http_json(method, url, headers=None, body=None, timeout=None, proxies=None):
+    """发 JSON 请求，返回 ``(status, text, data)``；网络异常时 status 为 None。
+
+    ``proxies`` 用 ``requests`` 风格的字典（``{"http": …, "https": …}``）。
+    传 ``{"http": None, "https": None}`` 表示**显式绕过**容器里的 HTTP_PROXY / HTTPS_PROXY
+    —— 那个环境变量常常是平台侧内部代理，跟着它出网会被送到错误的地方（实测 502）。
+    传 ``None``（默认）则沿用 requests / urllib 的默认行为。
+    """
     headers = dict(headers or {})
     timeout = timeout or (CONNECT_TIMEOUT, READ_TIMEOUT)
     if requests is not None:
         try:
             response = requests.request(method, url, headers=headers, json=body,
-                                        timeout=timeout, allow_redirects=False)
+                                        timeout=timeout, allow_redirects=False,
+                                        proxies=proxies)
             text = response.text or ""
             return response.status_code, text, _safe_json(text)
         except Exception as exc:
@@ -735,7 +1042,7 @@ def _http_json(method, url, headers=None, body=None, timeout=None):
         headers.setdefault("Content-Type", "application/json")
     request = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
     try:
-        with _URLLIB_OPENER.open(request, timeout=READ_TIMEOUT) as response:
+        with _urllib_opener(proxies).open(request, timeout=READ_TIMEOUT) as response:
             text = response.read().decode("utf-8", "replace")
             return response.status, text, _safe_json(text)
     except urllib.error.HTTPError as exc:
@@ -743,6 +1050,37 @@ def _http_json(method, url, headers=None, body=None, timeout=None):
         return exc.code, text, _safe_json(text)
     except Exception as exc:
         return None, "%s: %s" % (type(exc).__name__, exc), None
+
+
+def _first_env_proxy():
+    """从环境变量里取第一个非空的代理地址（HTTPS 优先）。取不到返回空串。"""
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        value = str(os.environ.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _requests_proxies(proxy):
+    """把单个代理地址转成 ``requests`` 的 ``proxies`` 字典。
+
+    注意：``proxy`` 为空串时返回的是 ``{"http": None, "https": None}`` —— 这是
+    **显式不走代理**，与 ``None``（沿用环境变量）语义完全不同，两者不能混用。
+    """
+    if proxy:
+        return {"http": proxy, "https": proxy}
+    return {"http": None, "https": None}
+
+
+
+def _url_seg(value):
+    """把值安全地放进 URL 的**路径段**。
+
+    TMDB id 来自 Emby 的 ``ProviderIds``、季号来自解析结果 —— 都不能假定它规整：
+    里面若有 ``/`` ``?`` ``#`` 就会把请求拼到别的路径上去（甚至会顺带改写查询串）。
+    这里按「整段转义」处理，正常的数字串不受影响。
+    """
+    return urllib.parse.quote(str(value if value is not None else "").strip(), safe="")
 
 
 def _walk_dicts(node, max_depth=8, limit=3000):
@@ -767,7 +1105,7 @@ def _walk_dicts(node, max_depth=8, limit=3000):
 
 
 def _split_ids(text):
-    return [x.strip() for x in re.split(r"[,\uFF0C|;；\s]+", str(text or "")) if x.strip()]
+    return [x.strip() for x in _IDS_SPLIT_RE.split(str(text or "")) if x.strip()]
 
 
 # 内置兜底表：与 plugin.json 的 inputs 默认值保持一致（改清单时同步）。
@@ -793,6 +1131,13 @@ FALLBACK_INPUT_DEFAULTS = {
     "max_fill_per_run": 1,
     "resource_sources": "",
     "target_dir": "",
+    # 「应有季集」的数据源与凭据（填了 tmdb_api_key 且数据源为 auto/direct 时直连 TMDB）
+    "tmdb_source": TMDB_SRC_AUTO,
+    "tmdb_api_key": "",
+    "tmdb_base_url": DEFAULT_TMDB_BASE,
+    "tmdb_language": DEFAULT_TMDB_LANGUAGE,
+    "tmdb_proxy": "",
+    "tmdb_proxy_mode": TMDB_PROXY_AUTO,
 }
 
 
@@ -849,13 +1194,13 @@ def _defaults_from_manifest(manifest):
 def _norm_title(text):
     """剧名归一化：去掉季/集标注与常见噪声，便于搜索与匹配。"""
     t = str(text or "")
-    t = re.sub(r"(?i)\bS\d{1,2}(E\d{1,3})?\b", " ", t)
-    t = re.sub(r"(?i)\b(season|seasons)\s*\d+", " ", t)
-    t = re.sub(r"第\s*[0-9一二三四五六七八九十]+\s*[季部]", " ", t)
-    t = re.sub(r"\[[^\]]*\]", " ", t)
-    t = re.sub(r"[（(][^）)]*[）)]", " ", t)
+    t = _TITLE_EPISODE_RE.sub(" ", t)
+    t = _TITLE_SEASON_EN_RE.sub(" ", t)
+    t = _TITLE_SEASON_CN_RE.sub(" ", t)
+    t = _TITLE_BRACKET_RE.sub(" ", t)
+    t = _TITLE_PAREN_RE.sub(" ", t)
     t = t.replace(".", " ").replace("_", " ")
-    t = re.sub(r"\s+", " ", t).strip(" -·")
+    t = _WS_SPLIT_RE.sub(" ", t).strip(" -·")
     return t
 
 
@@ -867,7 +1212,7 @@ def _is_relevant(candidate, title):
     它的 `note` 可能只是「更新至第 10 集」这类不含剧名的文本，此前两路结果统一过滤，
     会把正确的内置候选误杀。判定不出关键词时（剧名全是符号等）不做过滤，避免误杀。
     """
-    key_tokens = [tok for tok in re.split(r"\s+", str(title or "").lower()) if len(tok) >= 2]
+    key_tokens = [tok for tok in _WS_SPLIT_RE.split(str(title or "").lower()) if len(tok) >= 2]
     note = str((candidate or {}).get("note") or "").lower()
     if not note or not key_tokens:
         return True
@@ -890,7 +1235,7 @@ class _TtdClient(object):
 
     @property
     def configured(self):
-        return bool(self.token) and bool(re.match(r"^https?://", self.base_url, re.I))
+        return bool(self.token) and _is_http_url(self.base_url)
 
     def describe(self):
         return "%s｜令牌 %s" % (self.base_url, _mask(self.token))
@@ -899,11 +1244,9 @@ class _TtdClient(object):
         return {"Authorization": "Bearer %s" % self.token} if self.token else {}
 
     def request(self, method, path, body=None, params=None):
-        url = self.base_url + path
-        if params:
-            url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
-        status, text, data = _http_json(method, url, headers=self._headers(), body=body,
-                                        timeout=self.timeout)
+        status, text, data = _http_json(
+            method, _with_query(self.base_url + path, params),
+            headers=self._headers(), body=body, timeout=self.timeout)
         return status, text, data
 
     def get_json(self, path, params=None):
@@ -963,6 +1306,94 @@ class _TtdClient(object):
         return self.get_json("/api/re0/status")
 
 
+class _TmdbClient(object):
+    """TMDB 直连客户端（``api.themoviedb.org``），**不经过** TgtoDrive 的详情代理。
+
+    为什么会有这个类
+    ----------------
+    TgtoDrive 的 ``/api/media/details/tmdb/tv/{id}/season/{n}`` 在规范里写明
+    「**只有当前详情配置支持完整季集模式时可用**」；该模式在没有开启的环境里会直接返回
+    HTTP 409 ``TMDB_READONLY_MODE_INACTIVE``。缺集检测完全依赖「每一季应该有哪些集」，
+    该接口一不可用，整条链路就没了数据源 —— 直连 TMDB 不受这个约束。
+
+    代理
+    ----
+    API Key 是走**查询参数**的（TMDB v3 规范），因此任何回显都要脱敏；
+    容器出网往往需要代理，这里按调用方给的**候选列表**逐个尝试，
+    只在「代理 / 网关层错误」（:data:`PROXY_LAYER_STATUS`）时才换下一个 ——
+    拿不到 HTTP 响应或拿到网关错误，说明请求没到 TMDB，重试是安全的。
+    """
+
+    def __init__(self, api_key, base_url, language, logger, timeout=None,
+                 proxy_candidates=None):
+        self.api_key = str(api_key or "").strip()
+        base = str(base_url or "").strip() or DEFAULT_TMDB_BASE
+        self.base_url = base.rstrip("/")
+        self.language = str(language or DEFAULT_TMDB_LANGUAGE).strip()
+        self.log = logger
+        self.timeout = timeout
+        # [(代理地址, 说明), …]，最后一项固定是 ("", "直连")。为空时按「直连」处理。
+        self.proxy_candidates = list(proxy_candidates or [])
+        self.last_proxy_note = ""
+
+    @property
+    def configured(self):
+        return bool(self.api_key) and _is_http_url(self.base_url)
+
+    def describe(self):
+        return "%s｜API Key %s" % (self.base_url, _mask(self.api_key))
+
+    def _params(self, extra=None):
+        params = {"api_key": self.api_key}
+        if self.language:
+            params["language"] = self.language
+        if extra:
+            params.update(extra)
+        return params
+
+    def request(self, path, params=None):
+        """GET 一个 TMDB 接口，返回 ``(status, data, error)``；**不抛异常**。
+
+        按 ``proxy_candidates`` 逐个尝试，成功即止。
+        """
+        url = self.base_url + path
+        url = _with_query(url, self._params(params))
+        attempts = self.proxy_candidates or [("", "直连")]
+        last = ""
+        for proxy, label in attempts:
+            status, text, data = _http_json("GET", url, timeout=self.timeout,
+                                            proxies=_requests_proxies(proxy))
+            if status is None:
+                # 连不上 = 确定没到 TMDB，换下一个代理是安全的
+                last = "%s（经「%s」）" % (scrub_text(text, [self.api_key])[:140], label)
+                continue
+            if status in PROXY_LAYER_STATUS:
+                last = "HTTP %s（经「%s」，来自代理 / 网关）" % (status, label)
+                continue
+            self.last_proxy_note = label
+            return status, data, scrub_text((text or "")[:200], [self.api_key])
+        return None, None, last or "所有代理方式都失败"
+
+    def get_json(self, path, params=None):
+        """取 JSON；失败抛 RuntimeError（错误信息里 API Key 已脱敏）。"""
+        status, data, err = self.request(path, params=params)
+        if status is None:
+            raise RuntimeError("TMDB 直连请求 %s 失败：%s" % (path, err))
+        if not 200 <= status < 300:
+            raise RuntimeError("TMDB 直连请求 %s 返回 HTTP %s：%s" % (path, status, err))
+        return data
+
+    # -- 业务方法 ---------------------------------------------------------
+
+    def tv_detail(self, tmdb_id):
+        """剧集详情：含 ``seasons``（每季的 ``season_number``）与 ``number_of_seasons``。"""
+        return self.get_json("/tv/%s" % _url_seg(tmdb_id))
+
+    def tv_season_soft(self, tmdb_id, season):
+        """某一季的集数据（含 ``air_date``）。返回 ``(status, data, error)``，**不抛异常**。"""
+        return self.request("/tv/%s/season/%s" % (_url_seg(tmdb_id), _url_seg(season)))
+
+
 class _EmbyClient(object):
     """Emby 直连客户端 —— 本插件唯一能拿到「本地已有哪些集」的途径。"""
 
@@ -994,9 +1425,7 @@ class _EmbyClient(object):
         return {"X-Emby-Token": self.api_key} if self.api_key else {}
 
     def get_json(self, path, params=None):
-        url = self.base_url + path
-        if params:
-            url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+        url = _with_query(self.base_url + path, params)
         status, text, data = _http_json("GET", url, headers=self._headers(),
                                         timeout=self.timeout)
         if status is None:
@@ -1096,8 +1525,9 @@ class _EmbyClient(object):
 
     def episodes(self, series_id):
         """返回 ``{季号: {集号, …}}``；解析失败返回空字典。"""
-        data = self.get_json("/Shows/%s/Episodes"
-                             % urllib.parse.quote(str(series_id)),
+        # 用 _url_seg 而不是 urllib.parse.quote：后者的 safe 默认值是 "/"，
+        # 一旦 id 里带斜杠就会把请求指到别的路径上去（其它客户端已统一用 _url_seg）。
+        data = self.get_json("/Shows/%s/Episodes" % _url_seg(series_id),
                              {"Fields": "ParentIndexNumber,IndexNumber"})
         items = []
         for node in _walk_dicts(data):
@@ -1139,7 +1569,7 @@ class _PansouClient(object):
 
     @property
     def configured(self):
-        return bool(re.match(r"^https?://", self.base_url, re.I))
+        return _is_http_url(self.base_url)
 
     def describe(self):
         return "%s｜令牌 %s" % (self.base_url, _mask(self.token) if self.token else "（未启用鉴权）")
@@ -1315,12 +1745,8 @@ def _pick_config_value(payload, names):
 
 
 def _int_or_none(value):
-    try:
-        if value in (None, ""):
-            return None
-        return int(float(str(value).strip()))
-    except (TypeError, ValueError):
-        return None
+    """同 :func:`_finite_int`，语义是「认不出就返回 None」（供可选数值字段用）。"""
+    return _finite_int(value)
 
 
 def _parse_re0_status(payload):
@@ -1462,10 +1888,23 @@ class _Runner(object):
         # 「资源来源」：留空 = 由 TgtoDrive 决定（它自己的 resources/search 会用默认来源）
         self.resource_sources = _split_ids(self.p.get("resource_sources"))
 
+        # 「应有季集」的数据源：走 TgtoDrive 的详情代理，还是本插件直连 TMDB（见 _TmdbClient）
+        self.tmdb_source = str(self.p.get("tmdb_source") or TMDB_SRC_AUTO).strip().lower()
+        if self.tmdb_source not in VALID_TMDB_SOURCES:
+            self.tmdb_source = TMDB_SRC_AUTO
+        self.tmdb_proxy_mode = str(self.p.get("tmdb_proxy_mode")
+                                   or TMDB_PROXY_AUTO).strip().lower()
+        if self.tmdb_proxy_mode not in VALID_TMDB_PROXY_MODES:
+            self.tmdb_proxy_mode = TMDB_PROXY_AUTO
+
         self.ttd = _TtdClient(base, token, self.log)
         self.emby = _EmbyClient(self.p.get("emby_url"), self.p.get("emby_api_key"), self.log)
         self.pansou = _PansouClient(self.p.get("pansou_url"), self.p.get("pansou_token"),
                                     self.log)
+        # 注意：代理候选要读 TgtoDrive 的网络代理（会发请求），因此**延迟到真正用到时**再解析
+        # （见 _ensure_tmdb）。放这里会让 config / 未用到 TMDB 的场景也白白发一次请求。
+        self.tmdb = _TmdbClient(self.p.get("tmdb_api_key"), self.p.get("tmdb_base_url"),
+                                self.p.get("tmdb_language"), self.log)
 
         # 运行时状态
         self.missing = []          # 检测结果
@@ -1477,6 +1916,12 @@ class _Runner(object):
         # 「无法判定」的剧 [(剧名, [(季, 原因), …])] —— 某季应有集数读失败、不能算作「无缺失」
         # （否则用户会以为这部剧是完整的，实际根本没查成）
         self.undetermined = []
+        # 「季集详情」是否已探活过（整库扫描时只探一次，避免重复请求；见 _require_season_ready）
+        self._season_probed = False
+        # TMDB 直连的代理候选是否已解析、「TgtoDrive 网络代理」缓存（None = 还没读过）
+        self._tmdb_ready = False
+        self._ttd_proxy_cache = None
+        self.tmdb_note = ""             # 本次实际使用的 TMDB 数据源（人话）
         # TgtoDrive 自身的影视资源配置（只读；见 _load_ttd_config）
         self.ttd_settings = {}
         self.ttd_target_provider = ""
@@ -1662,6 +2107,122 @@ class _Runner(object):
         self.emby_source_note = "TgtoDrive 影视设置（media_emby）"
         self.log.info("已复用 TgtoDrive 影视设置里的 Emby 连接：%s" % self.emby.describe())
 
+    # -- TMDB 数据源（走 TgtoDrive 代理 / 本插件直连） -----------------------
+
+    def _ttd_proxy(self):
+        """读 TgtoDrive「网络代理」设置里**实际生效**的代理地址（用于 TMDB 直连出网）。
+
+        为什么优先用它：容器环境变量里的 HTTP_PROXY / HTTPS_PROXY 往往是**平台侧内部代理**，
+        拿它出网到公网（TMDB）会被送到错误的地方（实测 502）；真正管用的通常是
+        TgtoDrive 自己配的那个代理。读不到就返回空串，由调用方退回环境变量 / 直连。
+        """
+        if self._ttd_proxy_cache is not None:
+            return self._ttd_proxy_cache
+        self._ttd_proxy_cache = ""
+        if not self.ttd.configured:
+            return self._ttd_proxy_cache
+        for path in ("/api/proxy_settings", "/api/proxy-settings"):
+            try:
+                payload = self.ttd.get_json(path)
+            except Exception as exc:
+                self.log.warn("读取 %s 失败：%s" % (path, exc))
+                continue
+            if not isinstance(payload, dict):
+                continue
+            node = payload
+            data = payload.get("data")
+            if isinstance(data, dict):
+                node = data
+            for key in ("effective_proxy", "web_proxy", "proxy", "proxy_url"):
+                value = node.get(key)
+                if isinstance(value, str) and value.strip():
+                    self._ttd_proxy_cache = value.strip()
+                    return self._ttd_proxy_cache
+            for key in ("runtime", "proxies"):
+                block = node.get(key)
+                if isinstance(block, dict):
+                    for sub in ("https", "http"):
+                        value = block.get(sub)
+                        if isinstance(value, str) and value.strip():
+                            self._ttd_proxy_cache = value.strip()
+                            return self._ttd_proxy_cache
+        return self._ttd_proxy_cache
+
+    def _tmdb_proxy_candidates(self):
+        """按「TMDB 代理策略」算出代理候选 ``[(代理, 说明), …]``（去重，最后一项固定是直连）。
+
+        只在「代理 / 网关层错误」时才轮到下一个候选 —— 换个代理重发对 TMDB 是无副作用的
+        GET，不会造成重复写入。
+        """
+        candidates = []
+
+        def push(proxy, label):
+            if proxy is None:
+                return
+            if all(proxy != item[0] for item in candidates):
+                candidates.append((proxy, label))
+
+        explicit = str(self.p.get("tmdb_proxy") or "").strip()
+        if explicit:
+            push(explicit, "「TMDB 代理地址」里填的代理")
+        if self.tmdb_proxy_mode == TMDB_PROXY_AUTO:
+            ttd_proxy = self._ttd_proxy()
+            if ttd_proxy:
+                push(ttd_proxy, "TgtoDrive 网络代理设置")
+            env_proxy = _first_env_proxy()
+            if env_proxy:
+                push(env_proxy, "容器环境变量代理")
+        elif self.tmdb_proxy_mode == TMDB_PROXY_ENV:
+            env_proxy = _first_env_proxy()
+            if env_proxy:
+                push(env_proxy, "容器环境变量代理")
+        push("", "直连")
+        return candidates
+
+    def _ensure_tmdb(self):
+        """首次用到 TMDB 前解析一次代理候选（要读 TgtoDrive 代理，会发请求，故延迟到用时）。"""
+        if self._tmdb_ready:
+            return
+        self._tmdb_ready = True
+        self.tmdb.proxy_candidates = self._tmdb_proxy_candidates()
+        self.tmdb_note = self._tmdb_source_note()
+        self.log.info("TMDB 数据源：%s" % self.tmdb_note)
+
+    def _use_direct_tmdb(self):
+        """本次是否走「本插件直连 TMDB」。"""
+        if self.tmdb_source == TMDB_SRC_DIRECT:
+            return True
+        if self.tmdb_source == TMDB_SRC_TTD:
+            return False
+        return self.tmdb.configured          # auto：填了 Key 就直连
+
+    def _tmdb_source_note(self):
+        """本次实际使用的 TMDB 数据源（人话，写进日志与结果页）。"""
+        if self._use_direct_tmdb():
+            note = "直连 TMDB（%s，语言 %s）" % (self.tmdb.base_url, self.tmdb.language)
+            if self.tmdb.last_proxy_note:
+                note += "，经「%s」" % self.tmdb.last_proxy_note
+            return note
+        if self.tmdb_source == TMDB_SRC_TTD:
+            return "TgtoDrive 详情代理（按设置强制使用）"
+        return ("TgtoDrive 详情代理（未填 TMDB API Key，自动回退到它）"
+                "—— 若报 409 TMDB_READONLY_MODE_INACTIVE，请到「③ TMDB 设置」填入 API Key 改用直连")
+
+    def _tmdb_detail(self, tmdb_id):
+        """取 TMDB 剧集详情；失败抛 RuntimeError。"""
+        if self._use_direct_tmdb():
+            self._ensure_tmdb()
+            return self.tmdb.tv_detail(tmdb_id)
+        return self.ttd.get_json("/api/media/details/tmdb/tv/%s" % _url_seg(tmdb_id))
+
+    def _tmdb_season_soft(self, tmdb_id, season):
+        """取某一季的集数据，**不抛异常**，返回 ``(status, data, error)``。"""
+        if self._use_direct_tmdb():
+            self._ensure_tmdb()
+            return self.tmdb.tv_season_soft(tmdb_id, season)
+        return self.ttd.get_soft("/api/media/details/tmdb/tv/%s/season/%s"
+                                 % (_url_seg(tmdb_id), _url_seg(season)))
+
     # -- 测试连接 ----------------------------------------------------------
 
     def do_test(self):
@@ -1673,10 +2234,14 @@ class _Runner(object):
         else:
             try:
                 data = self.ttd.media_settings()
-                keys = sorted(data.keys())[:8] if isinstance(data, dict) else []
+                # 键数要报**真实总数**：此前先切片成前 8 个再取 len，于是 12 个键会显示成 8 个
+                all_keys = sorted(data.keys()) if isinstance(data, dict) else []
+                shown = all_keys[:8]
                 rows.append(["TgtoDrive", "✔",
                              "已连通；/api/media/settings 返回 %d 个顶层键%s"
-                             % (len(keys or []), ("：" + "、".join(keys)) if keys else "")])
+                             % (len(all_keys),
+                                ("：" + "、".join(shown) + ("…" if len(all_keys) > 8 else ""))
+                                if shown else "")])
             except Exception as exc:
                 rows.append(["TgtoDrive", "✘", str(exc)[:160]])
 
@@ -1714,14 +2279,16 @@ class _Runner(object):
             except Exception as exc:
                 rows.append(["Emby", "✘", str(exc)[:160]])
 
-        # 3) TMDB（经 TgtoDrive）
-        if self.ttd.configured:
+        # 3) TMDB —— 「应有季集」的数据源：走 TgtoDrive 详情代理，或本插件直连 TMDB
+        if self.ttd.configured or self.tmdb.configured:
+            self._ensure_tmdb()          # 解析代理候选（会读一次 TgtoDrive 的网络代理）
+            rows.append(["TMDB 数据源", "✔", self._tmdb_source_note()])
             try:
                 probe = self._tmdb_probe()
-                rows.append(["TMDB（经 TgtoDrive）", "✔" if probe else "⚠",
+                rows.append(["TMDB 剧集详情", "✔" if probe else "⚠",
                              probe or "接口可用，但没有返回可解析的季列表（可能该剧 ID 无数据）"])
             except Exception as exc:
-                rows.append(["TMDB（经 TgtoDrive）", "✘", str(exc)[:160]])
+                rows.append(["TMDB 剧集详情", "✘", str(exc)[:200]])
             # 3b) 季集详情 —— 这一项不通，整个插件的核心功能都做不了，必须显式暴露
             try:
                 season_ok, season_msg = self._season_probe()
@@ -1822,17 +2389,19 @@ class _Runner(object):
         last_error = ""
         for probe_id in ("1399", "1396"):   # 权力的游戏 / 绝命毒师
             try:
-                data = self.ttd.get_json("/api/media/details/tmdb/tv/%s" % probe_id)
+                data = self._tmdb_detail(probe_id)
             except Exception as exc:
                 last_error = str(exc)[:140]
                 continue
             seasons = _extract_tmdb_seasons(data)
             if seasons:
-                return ("TMDB 代理可用；探活剧集返回 %d 个季（%s）"
-                        % (len(seasons), "、".join("S%02d" % s for s in sorted(seasons)[:6])))
+                return ("可用（%s）；探活剧集返回 %d 个季（%s）"
+                        % ("直连 TMDB" if self._use_direct_tmdb() else "经 TgtoDrive 代理",
+                           len(seasons),
+                           "、".join("S%02d" % s for s in sorted(seasons)[:6])))
             # 能连上但解析不出季 → 说明是**接口返回形态**变了，把结构（键名）带回去
             last_error = "详情接口返回 2xx，但没解析出季列表。响应结构：%s" % \
-                         scrub_text(_describe_shape(data), [self.ttd.token])
+                         scrub_text(_describe_shape(data), [self.ttd.token, self.tmdb.api_key])
         if last_error:
             raise RuntimeError("TMDB 详情探活失败（两次都未成功）：%s" % last_error)
         return ""
@@ -1847,8 +2416,7 @@ class _Runner(object):
         """
         last = ""
         for probe_id in ("1399", "1396"):     # 权力的游戏 / 绝命毒师
-            status, data, err = self.ttd.get_soft(
-                "/api/media/details/tmdb/tv/%s/season/1" % probe_id)
+            status, data, err = self._tmdb_season_soft(probe_id, 1)
             if status is None:
                 last = "网络失败：%s" % (err or "未知")
                 continue
@@ -1861,13 +2429,68 @@ class _Runner(object):
                 continue
             numbers, _air = _extract_tmdb_episodes(data if isinstance(data, dict) else {})
             if numbers:
-                return True, ("季集详情可用；探活剧集 S01 返回 %d 集" % len(numbers))
+                return True, ("季集详情可用（%s）；探活剧集 S01 返回 %d 集"
+                              % ("直连 TMDB" if self._use_direct_tmdb()
+                                 else "经 TgtoDrive 代理", len(numbers)))
             last = ("接口返回 HTTP %s 但没解析出任何集数据。响应结构：%s"
-                    % (status, scrub_text(_describe_shape(data), [self.ttd.token])))
+                    % (status, scrub_text(_describe_shape(data),
+                                          [self.ttd.token, self.tmdb.api_key])))
+        if self._use_direct_tmdb():
+            return False, ("TMDB 直连拿不到季集数据（%s）—— 请检查「③ TMDB 设置」里的"
+                           "API Key 是否正确、以及容器能否出网（必要时在「TMDB 代理策略 / "
+                           "代理地址」里指定代理）。在它恢复之前，本插件确定不了"
+                           "「应该有哪些集」。" % last)
         return False, ("季集详情接口不可用（%s）。⚠️ 规范说明该接口**只有当前详情配置支持"
                        "完整季集模式时可用** —— 在它恢复之前，本插件无法确定"
                        "「应该有哪些集」，也就无法检测缺集（会把每一部剧都判为"
                        "「无法判定」而不是「无缺失」）。" % last)
+
+    def _require_season_ready(self):
+        """检测前**先探活一次「季集详情」**；确认不可用时立刻失败，不让整库白扫。
+
+        为什么必须拦在这里
+        ------------------
+        `do_test()` 一直在探活，但 `do_check()` 以前**从不探活** —— 于是当数据源不可用时：
+          * 每一部剧的**每一季**都会发一次请求、全部失败；
+          * 日志被刷成几十上百条告警（用户实测就是这样）；
+          * 最后拿到一份全是「无法判定」的结果，白跑一整轮（还白白消耗了时间预算）。
+
+        因此这里做**一次性**探活（本轮只探一次，结果缓存在 `_season_probed`），按数据源分流：
+
+        * 走 TgtoDrive 代理且命中 ``TMDB_READONLY_ERROR_CODE`` → **全局性**前置条件不满足，
+          直接抛错并给出可操作指引（改用直连，或把详情切到完整季集模式）；
+        * 直连 TMDB 且探活失败 → 抛错并提示检查 API Key / 出网 / 代理；
+        * 其它原因探活失败（例如两部探活剧集恰好没有第 1 季）→ **不阻断**，只告警后继续。
+        """
+        if self._season_probed:
+            return
+        self._season_probed = True
+        ok, message = self._season_probe()
+        if ok:
+            self.log.info("季集详情探活：%s" % message)
+            return
+        if self._use_direct_tmdb():
+            raise ValueError(
+                "TMDB 直连拿不到季集数据，缺集检测无法进行：\n"
+                "  · 数据源：%s\n"
+                "  · 探活结果：%s\n"
+                "  · 请检查「③ TMDB 设置」里的 **TMDB API Key** 是否正确；\n"
+                "  · 若 Key 没问题，多半是容器出不了网：在「TMDB 代理策略」里改成"
+                "「只用容器环境变量代理」，或在「TMDB 代理地址」里手填一个可用代理。"
+                % (self._tmdb_source_note(), message))
+        if TMDB_READONLY_ERROR_CODE in message:
+            raise ValueError(
+                "TgtoDrive 当前**未启用完整 TMDB 季集模式**，缺集检测无法进行：\n"
+                "  · 季集接口 /api/media/details/tmdb/tv/{id}/season/{n} 返回 HTTP 409 "
+                "%s；\n"
+                "  · 也就是说，本插件拿不到「每一季应该有哪些集」，检测与补齐都做不了；\n"
+                "  · **推荐**：到本插件的「③ TMDB 设置」里填上 TMDB API Key，"
+                "数据源选「直连 TMDB」后重跑 —— 直连不受该模式约束，最省事；\n"
+                "  · 或者：到 TgtoDrive 的影视发现 / 详情页设置里把详情切换为"
+                "「完整 TMDB 季集模式」再重跑。"
+                % TMDB_READONLY_ERROR_CODE)
+        self.log.warn("季集详情探活未通过（%s）—— 仍继续检测，逐部剧的失败会单独列出。"
+                      % message)
 
     # -- 仅检测缺失（只读） -------------------------------------------------
 
@@ -1960,6 +2583,9 @@ class _Runner(object):
 
     def do_check(self):
         self._require_readiness(need_search=False)
+        # 先确认「季集详情」可用 —— 不可用时整轮检测毫无意义，
+        # 早失败好过 50 部剧 × 每季一条失败告警（见 _require_season_ready）。
+        self._require_season_ready()
         series = self._load_series()
         library_note = self._library_note()
         if not series:
@@ -1995,6 +2621,7 @@ class _Runner(object):
                 skipped.append("%s（命中忽略关键词）" % item["name"])
                 processed += 1
                 continue
+            undet_before = len(self.undetermined)
             try:
                 found = self._detect_one(item)
             except Exception as exc:
@@ -2015,6 +2642,11 @@ class _Runner(object):
             elif item["name"] in self.whole_series_skipped:
                 # 已在 _detect_one 里记过原因，这里不再重复打印「无缺失」，避免自相矛盾
                 self.log.info("[%d/%d] %s → 跳过（本地一集都没有，见上一行说明）"
+                              % (index, len(window), item["name"]))
+            elif len(self.undetermined) > undet_before:
+                # 「无法判定」≠「无缺失」：某季的应有集数没读成，不能给用户一个虚假的
+                # 「这部剧是完整的」结论（具体原因已在上一行的 WARN 里给出）。
+                self.log.info("[%d/%d] %s → 无法判定（见上一行原因，不计入「无缺失」）"
                               % (index, len(window), item["name"]))
             else:
                 self.log.info("[%d/%d] %s → 无缺失" % (index, len(window), item["name"]))
@@ -2101,7 +2733,7 @@ class _Runner(object):
             self.log.info("「%s」本地一集都没有 → 按「只检查本地已有季的缺失」跳过"
                           "（若要连整季 / 整剧一起补齐，请关掉该开关）" % item["name"])
             return None
-        detail = self.ttd.get_json("/api/media/details/tmdb/tv/%s" % item["tmdb"])
+        detail = self._tmdb_detail(item["tmdb"])
         tmdb_seasons = _extract_tmdb_seasons(detail)
         if not tmdb_seasons:
             # 解析不到时**把响应的结构（键名）写进日志**。不要只截前 400 字 ——
@@ -2184,14 +2816,20 @@ class _Runner(object):
         ⚠️ 之前这里直接用会抛异常的 `get_json`：某一季 404 就把**整部剧**打成错误
         （用户实测里 50 部剧全是这样）；而另一端更危险 —— 若把失败当成「没有缺失」，
         用户会以为「这部剧是完整的」，其实是根本没查成。所以状态必须分开，且**逐季隔离**。
+
+        实际请求走 :meth:`_tmdb_season_soft`：按「TMDB 数据源」路由到 TgtoDrive 代理或直连 TMDB。
         """
-        path = "/api/media/details/tmdb/tv/%s/season/%s" % (tmdb_id, season)
-        status, data, err = self.ttd.get_soft(path)
+        status, data, err = self._tmdb_season_soft(tmdb_id, season)
         if status is None:
             return None, "error", "网络失败：%s" % (err or "未知")
         if status == 404:
             return None, "absent", "TMDB 没有这一季（HTTP 404）"
         if not 200 <= status < 300:
+            if TMDB_READONLY_ERROR_CODE in (err or ""):
+                return None, "error", (
+                    "HTTP 409 %s —— TgtoDrive 未启用「完整 TMDB 季集模式」；"
+                    "到「③ TMDB 设置」填入 TMDB API Key 并改用「直连 TMDB」即可绕过"
+                    % TMDB_READONLY_ERROR_CODE)
             return None, "error", "HTTP %s：%s" % (status, err or "")
         if not isinstance(data, dict):
             return None, "absent", "响应不是 JSON 对象"
@@ -2201,18 +2839,30 @@ class _Runner(object):
         if not self.only_aired:
             return {"numbers": sorted(numbers)}, "ok", ""
         today = date.today()
-        aired, undated = [], []
+        aired, undated, bad_date = [], [], []
         for number in sorted(numbers):
             air = air_dates.get(number)
             if not air:
                 undated.append(number)
                 continue
             parsed = _parse_date(air)
-            if parsed and parsed <= today:
+            if parsed is None:
+                # 有播出日期但**解析不出来**：既不能断定已播、也不能断定未播。
+                # 绝不能像以前那样**静默丢掉** —— 那样这一集就永远不会被计入「应有」，
+                # 它若真缺了也报不出来，是**假阴性**。
+                bad_date.append(number)
+                continue
+            if parsed <= today:
                 aired.append(number)
         if undated:
             self.log.info("S%02d 有 %d 集没有播出日期，按「未开播」处理，不计入应有集数：%s"
                           % (season, len(undated), _join_nums(undated)))
+        if bad_date:
+            self.log.warn("S%02d 有 %d 集的播出日期**无法解析**，按「未开播」处理、"
+                          "不计入应有集数：%s（原始值：%s）—— 若这些集其实已播出，"
+                          "请把该剧的季详情结构反馈给我们以便对接"
+                          % (season, len(bad_date), _join_nums(bad_date),
+                             "、".join(str(air_dates.get(n) or "")[:24] for n in bad_date[:3])))
         if not aired:
             # 整季都还没播出（或全部缺日期）→ 没有可期待的集，跳过；不报「整季缺失」
             self.log.info("S%02d 还没有任何已播出的集，跳过该季（不报缺失）" % season)
@@ -2292,6 +2942,10 @@ class _Runner(object):
             raise ValueError("未配置 Emby 地址或 API Key：本插件需要直连 Emby 才能读取"
                              "「本地已有哪些集」（TgtoDrive 的接口没有提供该数据）。"
                              "请在「① 连接设置」填写，或在 TgtoDrive 影视设置里配好 Emby 后留空。")
+        if self.tmdb_source == TMDB_SRC_DIRECT and not self.tmdb.configured:
+            raise ValueError("「TMDB 数据源」选了「直连 TMDB」，但没有可用的 TMDB API Key。"
+                             "请在「③ TMDB 设置」填写 API Key，或把数据源改回"
+                             "「自动（有 Key 直连，无 Key 走 TgtoDrive 代理）」/「TgtoDrive 详情代理」。")
         if need_search and self.source in (SOURCE_PANSOU, SOURCE_BOTH) \
                 and not self.pansou.configured:
             raise ValueError("未配置盘搜地址，但搜索源包含盘搜。请在「③ 补齐设置」填写，"
@@ -2316,6 +2970,7 @@ class _Runner(object):
             self.log.warn("**非 dry-run**：补齐动作会真实写网盘 / 创建离线任务")
 
         handled = 0
+        fill_errors = []
         fill_deadline = (self.started_at or time.time()) + TOTAL_TIME_BUDGET
         for item in self.missing:
             if self.max_fill and handled >= self.max_fill:
@@ -2330,7 +2985,14 @@ class _Runner(object):
                               "剩余 %d 部留到下次运行"
                               % (TOTAL_TIME_BUDGET, handled, len(self.missing) - handled))
                 break
-            self.filled.append(self._fill_one(item))
+            # 与检测阶段同理：**一部剧出问题不该把整轮补齐拖垮**。此前这里没有逐部隔离，
+            # 任一步抛异常（例如某条数据缺字段）都会让整轮失败、已处理的结果一起丢掉。
+            try:
+                self.filled.append(self._fill_one(item))
+            except Exception as exc:
+                name = (item.get("series") or {}).get("name") or "（未知剧名）"
+                fill_errors.append("%s：%s" % (name, str(exc)[:100]))
+                self.log.warn("补齐「%s」失败（已跳过该项，其余继续）：%s" % (name, exc))
             handled += 1
         if not self.max_fill and handled > 10 and not self.fill_budget_exhausted:
             self.log.info("本次不限制补齐部数，共处理 %d 部；建议先用「单次补齐上限」小步验证"
@@ -2393,15 +3055,23 @@ class _Runner(object):
         if skipped_actions:
             notes.append("有 %d 个季**没拿到可用的候选**（未搜到资源，或候选类型与所选动作不匹配 —— "
                          "例如离线下载只接受磁力 / 电驴）。详见下表的「处理结果」列。" % skipped_actions)
+        if fill_errors:
+            # 补齐失败必须显式列出：否则「补齐处理完成」会被读成「这一部已经补好了」
+            notes.append("以下剧集**补齐失败**（已跳过该项、其余照常处理，详见日志）："
+                         + "；".join(fill_errors[:5]))
+        # 缺失明细表要放进 extra_tables：**先算一次存下来**。此前「行数」和「行内容」
+        # 各调用了一次 _missing_rows()，等于把同一张表连算两遍（每行都要拼字符串、
+        # 还要重新遍历 self.missing）。
+        missing_rows = self._missing_rows()
         return self._result(
             ok=True, title="补齐处理完成", tone="default",
             alert=alert, stats=stats, rows=rows,
             rows_label="补齐明细（共 %d 行，按季展开）" % len(rows),
             headers=["剧集", "季", "缺失集", "搜索关键词", "候选数", "类型", "处理结果"],
             notes=notes,
-            extra_tables=[{"type": "table", "label": "缺失明细（共 %d 行）" % len(self._missing_rows()),
+            extra_tables=[{"type": "table", "label": "缺失明细（共 %d 行）" % len(missing_rows),
                            "headers": ["剧集", "季", "缺失集", "集数", "说明"],
-                           "rows": self._missing_rows() or [["（无）", "-", "-", "-", "-"]]}],
+                           "rows": missing_rows or [["（无）", "-", "-", "-", "-"]]}],
             extra_components=self._search_note_components())
 
     def _fill_one(self, item):
@@ -2424,7 +3094,9 @@ class _Runner(object):
             # 多季同时缺失时用剧名搜（一次拿到整包更省事）；只缺一季时带上季号，
             # 减少「想补 S02 却抓到 S01 包」的概率。
             keyword = "%s S%02d" % (title, season) if len(seasons) == 1 else title
-            candidates, errors = self._search_for(item, season, keyword)
+            # 把已经归一化好的 title 传下去：_search_for 每个季都要用它，
+            # 不传就会按季把同一个剧名重复归一化一遍（6 次正则替换）。
+            candidates, errors = self._search_for(item, season, keyword, title)
             entry = {
                 "season": "S%02d" % season,
                 "keyword": keyword,
@@ -2461,12 +3133,16 @@ class _Runner(object):
                                          "以便后续版本精确对接。盘搜（PanSou）的响应结构是公开文档化的，"
                                          "候选解析完整。", "style": {"tone": "muted"}}]
 
-    def _search_for(self, item, season, keyword):
-        """针对**一个季**在配置的搜索源里找候选；返回 ``(候选列表, 错误列表)``。"""
+    def _search_for(self, item, season, keyword, title=None):
+        """针对**一个季**在配置的搜索源里找候选；返回 ``(候选列表, 错误列表)``。
+
+        ``title`` 是调用方已经归一化好的剧名（供粗筛用）；不传则就地归一化。
+        """
         candidates, errors = [], []
         detail = item["seasons"].get(season) or {}
         missing = list(detail.get("episodes") or [])
-        title = _norm_title(item["series"]["name"])
+        if title is None:
+            title = _norm_title(item["series"]["name"])
         year = item["series"].get("year") or 0
 
         if self.source in (SOURCE_BUILTIN, SOURCE_BOTH):
@@ -2621,10 +3297,20 @@ class _Runner(object):
     # -- 生效配置 ----------------------------------------------------------
 
     def do_config(self):
+        # TMDB 直连要读 TgtoDrive 的网络代理来解析代理候选，这里先解析一次，
+        # 好让下面「数据源 / 代理」两行显示的是**真正会用的**东西。
+        if self.ttd.configured or self.tmdb.configured:
+            self._ensure_tmdb()
         rows = [
             ["执行功能", FUNC_LABELS.get(self.func, self.func)],
             ["TgtoDrive", self.ttd.describe()],
             ["Emby", "%s（来源：%s）" % (self.emby.describe(), self.emby_source_note or "未确认")],
+            ["TMDB 数据源", self._tmdb_source_note()],
+            ["TMDB 直连设置", "%s｜语言 %s｜代理策略：%s"
+             % (self.tmdb.describe(), self.tmdb.language,
+                TMDB_PROXY_LABELS.get(self.tmdb_proxy_mode, self.tmdb_proxy_mode))],
+            ["TMDB 手动代理", str(self.p.get("tmdb_proxy") or "").strip()
+             or "（未填：按上面的代理策略自动挑）"],
             ["媒体库范围", "、".join(self.library_ids) if self.library_ids else "全部媒体库"],
             ["单次检测上限", "%d 部（%s）" % (self.max_series,
              "整库超过它时按轮转分段扫描" if self.max_series else "不限")],
@@ -2796,30 +3482,20 @@ SEASON_NUMBER_KEYS = ("season_number", "seasonNumber", "season_no", "seasonNo",
 def _season_number_of(item):
     """从「季」条目里取出季号；取不到时尝试从 `name`（如「第 2 季」/「Season 2」）里折出来。"""
     if isinstance(item, (int, float)):
-        try:
-            return int(item)
-        except (TypeError, ValueError):
-            return None
+        return _finite_int(item)
     if not isinstance(item, dict):
         return None
     for key in SEASON_NUMBER_KEYS:
-        value = item.get(key)
-        try:
-            if value is not None and str(value).strip() != "":
-                return int(float(str(value).strip()))
-        except (TypeError, ValueError):
-            continue
+        number = _finite_int(item.get(key))
+        if number is not None:
+            return number
     name = str(item.get("name") or item.get("title") or "")
     if name:
-        if re.search(r"特别|特典|specials?", name, re.I):
+        if _SEASON_SPECIAL_RE.search(name):
             return 0
-        match = re.search(r"(?:season|s)\s*0*(\d{1,3})", name, re.I) \
-            or re.search(r"第\s*0*(\d{1,3})\s*季", name)
+        match = _SEASON_EN_RE.search(name) or _SEASON_CN_RE.search(name)
         if match:
-            try:
-                return int(match.group(1))
-            except (TypeError, ValueError):
-                return None
+            return _finite_int(match.group(1))
     return None
 
 
@@ -2866,14 +3542,9 @@ def _extract_season_count(payload):
     for node in _walk_dicts(payload):
         for key in ("number_of_seasons", "numberOfSeasons", "seasons_count",
                     "seasonsCount", "total_seasons"):
-            try:
-                value = node.get(key)
-                if value is not None and str(value).strip() != "":
-                    count = int(float(str(value).strip()))
-                    if count > 0:
-                        return count
-            except (TypeError, ValueError):
-                continue
+            count = _finite_int(node.get(key))
+            if count and count > 0:
+                return count
     return 0
 
 
@@ -2982,15 +3653,29 @@ DATE_FORMATS = (
 
 
 def _parse_date(text):
+    """把 ``YYYY-MM-DD`` / ``YYYY/MM/DD`` / ``YYYY-MM-DDTHH:MM:SS`` 解析成 ``date``；认不出返回 None。
+
+    先走「定长直切」快路径：TMDB 的 ``air_date`` 绝大多数就是 ``YYYY-MM-DD``，
+    切片 + ``date()`` 构造比 ``strptime`` 快约 **10 倍**（实测 3.3µs → 0.33µs），
+    而**一季的每一集都要调用一次** —— 大库扫描时这个差别会放大到几十万次。
+    ``strptime`` 与正则仍作为兜底保留，输入输出语义与原实现完全一致。
+    """
     text = str(text or "").strip()
     if not text:
         return None
+    head = text[:10]
+    if len(head) == 10 and head[4] == "-" and head[7] == "-":
+        # 形如 2024-01-05 —— 顺带覆盖 2024-01-05T10:00:00 / "2024-01-05 10:00" 这类带时间后缀的
+        try:
+            return date(int(head[:4]), int(head[5:7]), int(head[8:10]))
+        except ValueError:
+            pass          # 形似但非法（如 2024-13-45），交给下面按原逻辑继续尝试
     for fmt, length in DATE_FORMATS:
         try:
             return datetime.strptime(text[:length], fmt).date()
         except ValueError:
             continue
-    match = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})", text)
+    match = _DATE_PREFIX_RE.match(text)
     if match:
         try:
             return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))

@@ -3,7 +3,7 @@
   "id": "ttd-daily-digest",
   "name": "TTD每日推送",
   "version": "1.0.0",
-  "description": "每天定时把 TgtoDrive 的数据汇总成一条消息推送给你：今日入库资源列表、Emby 新增电影/电视剧数量、媒体库总览、最近播放、追剧日历、播放趋势等。所有数据都通过 TgtoDrive 自身的 OpenAPI 读取，不需要额外配置 Emby 地址或密钥。支持推到 Telegram（直接调用 ttd 已配置的通知机器人）与微信（调用「企业微信通知」插件，凭据由它自己保管），可单选也可双发。页面右侧有「发送测试推送」按钮，点击立即把当前配置的内容发给你，用于验证整条链路。板块可自由勾选、每项可设条数上限，报告版式支持纯文本与 Markdown（Telegram）两种。",
+  "description": "把 TgtoDrive 的媒体库数据汇总成一条日报，推送到 Telegram 或企业微信。",
   "author": "a2695154202",
   "entry": "plugin.py",
   "timeout": 180,

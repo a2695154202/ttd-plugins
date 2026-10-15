@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "id": "missing-episodes",
-  "name": "剧集缺集检测与补齐",
+  "name": "剧集缺集检测与补齐（未开发完成）",
   "version": "1.0.0",
-  "description": "读取媒体库里已有哪些剧集，与 TMDB 上「应该有」的季集求差集，找出缺集；再按你配置的搜索源去找缺失资源并按选定动作补齐。本地季集走 Emby 直连读取（TgtoDrive 的接口没有提供「某剧本地集号清单」，只有电影/剧集/单集的总量统计），应有季集走 TgtoDrive 的 TMDB 代理，因此不需要另外准备 TMDB 的 API Key。搜索源可选 TgtoDrive 内置资源检索、你自建的盘搜（PanSou）或两者都查；补齐动作可选「仅记录并列出链接」「转存到网盘」「提交磁力/电驴离线下载」，默认最保守的「仅记录」，并且默认开启预览模式——只打印将要执行的操作，不会真正写网盘。附带「测试连接」按钮，可一键检查 TgtoDrive、Emby、TMDB 代理与盘搜四项连通性。内置「仅检测缺失」只读模式，适合先看清缺口再决定是否补齐。",
+  "description": "🚧 未开发完成，仅供测试。比对本地剧集与 TMDB 应有的季集找出缺集，并按你的配置搜索补齐（默认只记录，不写盘）。",
   "author": "a2695154202",
   "entry": "plugin.py",
   "timeout": 1800,
@@ -52,6 +52,62 @@
       "help": "Emby 后台「设置 → API 密钥」里创建的密钥，用于读取剧集与集列表（只读）。\n\n留空时同上，尝试复用 TgtoDrive 影视设置里的 Emby 配置。密钥不会出现在日志或结果页中。"
     },
     {
+      "name": "tmdb_source",
+      "label": "「应有季集」的数据源",
+      "type": "select",
+      "default": "auto",
+      "options": [
+        {"label": "自动（填了 API Key 就直连 TMDB，否则走 TgtoDrive 代理）", "value": "auto"},
+        {"label": "TgtoDrive 详情代理", "value": "ttd"},
+        {"label": "直连 TMDB（用下面的 API Key）", "value": "direct"}
+      ],
+      "help": "决定「每一季应该有哪些集」从哪里读。\n\n走 **TgtoDrive 详情代理**时，该季集接口「只有当前详情配置支持完整季集模式时可用」；没开时会返回 HTTP 409 `TMDB_READONLY_MODE_INACTIVE`，缺集检测就没有数据源。\n\n此时**最省事的做法是填上 TMDB API Key 并保持「自动」** —— 插件会直连 api.themoviedb.org，不受那个模式约束。"
+    },
+    {
+      "name": "tmdb_api_key",
+      "label": "TMDB API Key",
+      "type": "password",
+      "default": "",
+      "placeholder": "themoviedb.org → 设置 → API 里申请（用 v3 的 API Key）",
+      "help": "本插件**自己直连 TMDB** 时用的密钥。填了它并把数据源保持「自动」，就会绕开 TgtoDrive 详情代理的「完整季集模式」限制。\n\n留空则完全走 TgtoDrive 代理。密钥走查询参数发给 TMDB，插件已做脱敏，不会出现在日志或结果页中。"
+    },
+    {
+      "name": "tmdb_base_url",
+      "label": "TMDB 接口地址",
+      "type": "text",
+      "default": "https://api.themoviedb.org/3",
+      "placeholder": "https://api.themoviedb.org/3",
+      "help": "直连 TMDB 时的接口根地址。容器访问不了官方域名时，可以填一个自建 / 第三方的 TMDB 反代地址（接口结构须与官方一致）。"
+    },
+    {
+      "name": "tmdb_language",
+      "label": "TMDB 语言",
+      "type": "text",
+      "default": "zh-CN",
+      "placeholder": "zh-CN",
+      "help": "影响剧集名称与简介的语言；**不影响集号与播出日期**（缺集比对用的是后两者）。"
+    },
+    {
+      "name": "tmdb_proxy",
+      "label": "TMDB 代理地址（可选）",
+      "type": "text",
+      "default": "",
+      "placeholder": "http://192.168.1.2:7890",
+      "help": "本插件直连 TMDB 时使用的代理。填了就**优先用它**，且**只对 TMDB 生效**（不影响 TgtoDrive / Emby / 盘搜的请求）。\n\n留空则按下面的「代理策略」自动挑选。"
+    },
+    {
+      "name": "tmdb_proxy_mode",
+      "label": "TMDB 代理策略",
+      "type": "select",
+      "default": "auto",
+      "options": [
+        {"label": "自动：TgtoDrive 网络代理 → 容器环境变量 → 直连（逐个尝试）", "value": "auto"},
+        {"label": "只用容器环境变量代理", "value": "env"},
+        {"label": "不使用代理（直连）", "value": "off"}
+      ],
+      "help": "容器出网通常需要代理。\n\n⚠️ 容器里的 `HTTP_PROXY` / `HTTPS_PROXY` 往往是**平台侧内部代理**，拿它出网到公网会被送到错处（实测返回 502）。所以「自动」会**优先用 TgtoDrive 自己配的网络代理**，失败再依次退到环境变量、直连 —— 只在这类「代理 / 网关层」错误时才换下一个，不会重复打扰 TMDB。"
+    },
+    {
       "name": "library_ids",
       "label": "媒体库 id（可留空）",
       "type": "text",
@@ -66,7 +122,7 @@
       "default": 50,
       "min": 1,
       "max": 2000,
-      "help": "每次运行最多检测多少部剧，防止媒体库很大时超时（插件超时 1800 秒）。检测按剧名排序，从前往后取。\n\n想全量检测就把它调大；配合定时执行分批跑也可以。"
+      "help": "每次运行最多检测多少部剧，防止媒体库很大时撞上插件超时（1800 秒）。\n\n**媒体库比它大时不会漏剧**：插件会记录扫描进度，本次从上次的位置往后取，下次接着往后轮转（顺序按剧名排序、稳定不变，所以轮转能覆盖全库）。中途撞上时间预算也会保存进度并带着已完成的结果收工，不会白跑。\n\n要一次扫完就调大；配合「定时执行」分批跑也可以。"
     },
     {
       "name": "only_aired",
@@ -181,23 +237,34 @@
     "width": "wide",
     "layout": "stack",
     "components": [
-      {"type": "heading", "text": "🎬 剧集缺集检测与补齐"},
-{"type": "markdown", "text": "把「本地已有哪些集」与「TMDB 应该有哪`些集」求差集，找出缺集；按你配置的搜索源找缺失资源，并按选定动作补齐。\n\n**建议第一次这样用**：① 点「测试连接」确认各项都通（尤其 **TMDB 季集详情（关键）** 这一项，它不通就没法确定「应该有哪些集」）→ ② 点「检查缺失（只读）」看清缺口 → ③ 确认无误后再执行补齐（默认**预览模式**，只打印将要做什么）。"},
-    {"type": "alert", "text": "两个前提：① 需要 **TgtoDrive 的 OpenAPI 令牌**（读 TMDB 详情与资源检索）；② 需要 **Emby 直连信息**（地址 + API Key）—— TgtoDrive 的接口没有「某剧本地集号清单」，所以本地季集只能直连 Emby 读取。Emby 两项留空时，插件会尝试复用 TgtoDrive 影视设置里已配置的 Emby。", "style": {"tone": "warning"}},
-    {"type": "text", "text": "**结果有三种，别把第三种当成第二种**：「有缺失」＝比出了具体缺集；「无缺失」＝每个季都比对成功且集号齐全；**「⚠️ 无法判定」＝某些季的「应有集数」没读成**（既不算缺失、也不算完整）。遇到「无法判定」请先点「测试连接」看 **TMDB 季集详情（关键）** 的结论 —— 规范说明该接口「只有当前详情配置支持完整季集模式时可用」。", "style": {"tone": "muted"}},
+      {"type": "heading", "text": "🚧 剧集缺集检测与补齐 · 未开发完成"},
+      {"type": "alert", "text": "本插件尚未开发完成 —— 功能、参数与结果格式都可能变动，请仅用于测试，不要长期依赖。", "style": {"tone": "warning"}},
+      {"type": "markdown", "text": "把「本地已有哪些集」与「TMDB 应该有哪些集」求差集找出缺集，再按你配置的搜索源找资源、按选定动作补齐。\n\n**第一次用，按这个顺序来**（右侧三个按钮按 ①②③ 编号）：\n\n1. 点「**① 测试连接**」—— 一次确认 TgtoDrive / Emby / TMDB / 盘搜都通，其中 **TMDB 季集详情（关键）** 那一项最重要，它不通就无法确定「应该有哪些集」；\n2. 点「**② 检查缺失（只读）**」—— 看清缺口，**不写任何数据**；\n3. 确认无误后再点「**③ 检测并补齐**」—— 默认**预览模式**，只打印将要做什么。"},
+      {"type": "alert", "text": "开始前确认两件事：① TgtoDrive 的 OpenAPI 令牌（在「实用工具 → OpenAPI」创建）；② 能直连的 Emby 地址 + API Key —— TgtoDrive 的接口没有「某剧本地集号清单」，所以本地季集只能直连 Emby 读取。Emby 这两项留空时，插件会自动尝试复用「TgtoDrive → 影视发现 → Emby 设置」里已配好的那份，配过就不用再填。", "style": {"tone": "primary"}},
+      {"type": "alert", "text": "结果有三种，别把第三种当成第二种：「有缺失」＝比出了具体缺集；「无缺失」＝每个季都比对成功且集号齐全；「⚠️ 无法判定」＝某些季的「应有集数」根本没读成（既不算缺失、也不算完整）。遇到「无法判定」先点「测试连接」看 TMDB 季集详情（关键）这一项 —— 不通就到「TMDB 设置」填上 API Key 改用直连即可绕过（TgtoDrive 详情页没开「完整季集模式」时，它的季集接口会返回 409）。", "style": {"tone": "warning"}},
       {"type": "grid", "columns": 4, "children": [
         {"type": "group", "style": {"span": 3}, "children": [
           {"type": "tabs", "children": [
-            {"type": "card", "label": "连接设置", "children": [
-              {"type": "markdown", "text": "**TgtoDrive** 与 **Emby** 两处连接。Emby 必须能直连（同容器可用局域网地址），否则读不到本地季集。"},
+            {"type": "card", "label": "① 连接设置", "children": [
+              {"type": "markdown", "text": "**这一页是必填项**：TgtoDrive 与 Emby 两处连接。\n\n- **TgtoDrive** —— 用来读 TMDB 详情、做资源检索、转存与离线下载。同容器一般就是 `http://127.0.0.1:12366`。\n- **Emby** —— **必须能直连**，否则读不到「本地已有哪些集」。同容器可以填局域网地址（如 `http://192.168.1.10:8096`），填网页入口带 `/emby` 也行。\n\n填完建议先点右侧「**① 测试连接**」验证一下。"},
               {"type": "field", "name": "tgto_base_url"},
               {"type": "field", "name": "tgto_token"},
               {"type": "divider"},
               {"type": "field", "name": "emby_url"},
               {"type": "field", "name": "emby_api_key"}
             ]},
-            {"type": "card", "label": "检测范围", "children": [
-              {"type": "markdown", "text": "控制检测哪些剧、哪些集算「应该有」。默认设置已按参考插件的最佳实践调好，**不建议改动**「只统计已播出的集」。"},
+            {"type": "card", "label": "② TMDB 设置", "children": [
+              {"type": "markdown", "text": "**「每一季应该有哪些集」从这里取。**\n\n默认走 **TgtoDrive 的详情代理**。但该代理的季集接口「**只有当前详情配置支持完整季集模式时可用**」—— 没开时会返回 HTTP 409 `TMDB_READONLY_MODE_INACTIVE`，缺集检测就没有数据源。\n\n**最省事：填上 TMDB API Key，数据源保持「自动」**，插件就会直连 `api.themoviedb.org`，不受上面那个模式约束。API Key 在 [themoviedb.org](https://www.themoviedb.org/settings/api) 注册后到「设置 → API」申请（v3 的 API Key 即可）。\n\n直连是本插件**自己**发的请求、不经过 TgtoDrive，所以容器要能出网；出不了网就填最下面的代理。"},
+              {"type": "field", "name": "tmdb_source"},
+              {"type": "field", "name": "tmdb_api_key"},
+              {"type": "field", "name": "tmdb_base_url"},
+              {"type": "field", "name": "tmdb_language"},
+              {"type": "divider"},
+              {"type": "field", "name": "tmdb_proxy"},
+              {"type": "field", "name": "tmdb_proxy_mode"}
+            ]},
+            {"type": "card", "label": "③ 检测范围", "children": [
+              {"type": "markdown", "text": "控制检测**哪些剧**、**哪些集算「应该有」**。\n\n默认值已按最佳实践调好，**不建议改动**「只统计已播出的集」—— 关掉它会把尚未开播的集也算成缺集，导致大量误报。\n\n「单次检测上限」默认 50 部。媒体库更大时**不会漏**：插件会记录**扫描进度**，每次接着上次的位置往后轮转，多跑几次即可覆盖全库（顺序按剧名排序，稳定不变）。"},
               {"type": "field", "name": "library_ids"},
               {"type": "field", "name": "max_series"},
               {"type": "field", "name": "ignore_series"},
@@ -206,8 +273,8 @@
               {"type": "field", "name": "only_season_exist"},
               {"type": "field", "name": "include_s00"}
             ]},
-            {"type": "card", "label": "补齐设置", "children": [
-              {"type": "markdown", "text": "去哪里找资源、找到后做什么。\n\n**这里的参数大多直接从 TgtoDrive 读，不需要重填**：转存目标网盘 / 点数上限取自 TgtoDrive 的影视设置；**RE0** 是 TgtoDrive 集成的服务，用它只要在 TgtoDrive 里授权过即可（本插件只读它的授权状态）；可限定的「资源来源」清单也由 TgtoDrive 提供。\n\n转存与离线下载会**真实写网盘**，所以默认「仅记录」+ **预览模式开启**。"},
+            {"type": "card", "label": "④ 补齐设置", "children": [
+              {"type": "markdown", "text": "去哪里找资源、找到后做什么。\n\n**这里的参数大多直接从 TgtoDrive 读，不需要重填**：转存目标网盘 / 点数上限取自 TgtoDrive 的影视设置；**RE0** 是 TgtoDrive 集成的服务，只要在 TgtoDrive 里授权过就能用（本插件只读它的授权状态）；可限定的「资源来源」清单也由 TgtoDrive 提供。\n\n⚠️ 「转存到网盘」与「提交离线下载」会**真实写网盘、可能消耗会员点数**。所以默认是「仅记录并列出链接」+ **预览模式开启** —— 先跑一次核对候选是否正确，再关掉预览真正执行。"},
               {"type": "field", "name": "search_source"},
               {"type": "field", "name": "pansou_url"},
               {"type": "field", "name": "pansou_token"},
@@ -222,15 +289,23 @@
           ]}
         ]},
         {"type": "group", "style": {"span": 1}, "children": [
-          {"type": "field", "name": "func"},
-          {"type": "button", "label": "测试连接", "action": "run", "params": {"func": "test"}, "style": {"tone": "primary", "size": "large", "variant": "outline"}},
-          {"type": "button", "label": "检查缺失（只读）", "action": "run", "params": {"func": "check"}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
-          {"type": "button", "label": "检测并补齐", "action": "run", "params": {"func": "fill"}, "style": {"tone": "success", "size": "large", "variant": "solid"}}
+          {"type": "card", "label": "⚡ 快捷操作", "children": [
+            {"type": "field", "name": "func"},
+            {"type": "markdown", "text": "下面四个按钮会**覆盖**上面选的「执行功能」，点哪个就跑哪个。"},
+            {"type": "button", "label": "① 测试连接", "action": "run", "params": {"func": "test"}, "style": {"tone": "primary", "size": "large", "variant": "outline"}},
+            {"type": "button", "label": "② 检查缺失（只读）", "action": "run", "params": {"func": "check"}, "style": {"tone": "primary", "size": "large", "variant": "solid"}},
+            {"type": "button", "label": "③ 检测并补齐", "action": "run", "params": {"func": "fill"}, "style": {"tone": "success", "size": "large", "variant": "solid"}},
+            {"type": "button", "label": "查看生效配置", "action": "run", "params": {"func": "config"}, "style": {"tone": "default", "size": "large", "variant": "outline"}},
+            {"type": "divider"},
+            {"type": "link", "href": "https://github.com/a2695154202/ttd-plugins/blob/main/plugins/missing-episodes/README.md", "label": "📖 打开完整说明与常见问题（README）"}
+          ]}
         ]}
       ]},
       {"type": "divider"},
-      {"type": "text", "text": "「仅检测缺失」是纯只读操作：不写网盘、不改媒体库、不动 TgtoDrive 的任何设置。补齐动作默认走预览，只有你显式关掉「预览模式」才会真正执行。", "style": {"tone": "muted"}},
-      {"type": "text", "text": "定时执行：在「我的插件 → 定时执行」新建计划，选本插件、运行参数填 func=check（或 fill），建议先用 check 观察一段时间，稳定后再切 fill。", "style": {"tone": "muted"}}
+      {"type": "card", "label": "⏰ 定时执行", "children": [
+        {"type": "markdown", "text": "到「**我的插件 → 定时执行**」新建计划，选本插件，运行参数填 `func=check`。\n\n建议先用 `check` 观察一段时间，确认结果可信后再改成 `fill`。媒体库很大时**不用一次扫完** —— 插件会记录扫描进度，每次接着上次的位置往后轮转，多跑几次即可覆盖全库。"}
+      ]},
+      {"type": "text", "text": "「仅检测缺失」是纯只读操作：不写网盘、不改媒体库、不动 TgtoDrive 的任何设置。补齐动作默认走预览，只有你显式关掉「预览模式」才会真正执行。", "style": {"tone": "muted"}}
     ]
   }
 }
